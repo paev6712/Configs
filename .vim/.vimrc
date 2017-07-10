@@ -43,9 +43,24 @@ nnoremap <C-k> <C-W><C-K>
 nnoremap <C-h> <C-W><C-H>
 nnoremap <C-l> <C-W><C-l>
 
+" Remap window resizing
+nnoremap = 5<C-w>+
+nnoremap - 5<C-w>-
+nnoremap + 5<C-w>>
+nnoremap _ 5<C-w><
+nnoremap <silent> <C-+> :exe "resize " . (winheight(0) * 3/2)<CR>
+nnoremap <silent> <C--> :exe "resize " . (winheight(0) * 2/3)<CR>
+nnoremap <C-=> <C-w>=
+
 " Make new splits open to the right/ below current
 set splitbelow
 set splitright
 
 " Map caps lock to esc
 inoremap jk <Esc>
+
+" Map capital navigation to jump farther
+nnoremap <S-j> 5j
+nnoremap <S-k> 5k
+nnoremap <S-h> 5h
+nnoremap <S-l> 5l

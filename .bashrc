@@ -24,8 +24,11 @@ alias ls='/bin/ls --color=tty'
 export FROOT=/vobs/projects/springboard/fabos
 export CSCOPE_DB=$FROOT/cscope/cscope.out
 
+# Prevent scroll locking
+stty -ixon
 
-# Shortcut functions
+
+# Shortcut functions *******************************************************************************************************************************************************
 src() {
 	if [ -z "$1" ] ; then cd /vobs/projects/springboard/fabos/src
 	else cd /vobs/projects/springboard/fabos/src/$1
