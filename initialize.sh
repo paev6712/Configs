@@ -117,4 +117,11 @@ else
 fi
 
 
+echo "        Create tmp directory for vim.swp files"
+if [ ! -d ~/.vim/tmp/ ]; then
+	# Create tmp directory
+	mkdir ~/.vim/tmp
+fi
+
+
 echo "Finished initializing environment"
