@@ -4,5 +4,6 @@
 	tmux
 
 To use these configurations, the files must be symbolically
-linked to the home directory. Use command [ln -s <file> ~/]
-to create links.
+linked to the home directory. Use the initialize.sh script
+to create the symbolic links.
+

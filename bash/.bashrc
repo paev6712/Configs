@@ -5,27 +5,37 @@ set -o vi
 
 # Set the prompt style
 # http://www.cyberciti.biz/tips/howto-linux-unix-bash-shell-setup-prompt.html
+
+# Set interface being used
 myTty="$(tty)";
 myTty="${myTty:5}";
-currView=" `cleartool pwv -short`"
-if [ "$currView" == " ** NONE **" ]; then
-	currView="";
-fi
+
+# Set shell level
 myShLvl=""
 if [ $SHLVL -gt 1 ]; then
 	myShLvl="($SHLVL)";
 fi
+
+# Set current view (for clearcase)
+currView=" `cleartool pwv -short`"
+if [ "$currView" == " ** NONE **" ]; then
+	currView="";
+fi
+
+# Define command prompt
 PS1="[$myTty\[\e[0;33m\]$myShLvl\[\e[m\]\[\e[1;34m\]$currView\[\e[m\]] \[\e[0;32m\]\h:\[\e[m\] \W \[\e[1;38m\]>\[\e[m\] "
 
+# Define colors
 export LS_COLORS='no=00:fi=00:di=00;31:ln=00;36:pi=40;33:so=00;35:bd=40;33;01:cd=40;33;01:or=01;05;37;41:mi=01;05;37;41:ex=00;32:*.cmd=00;32:*.exe=00;32:*.com=00;32:*.btm=00;32:*.bat=00;32:*.sh=00;32:*.csh=00;32:*.tar=00;31:*.tgz=00;31:*.arj=00;31:*.taz=00;31:*.lzh=00;31:*.zip=00;34:*.z=00;31:*.Z=00;31:*.gz=00;31:*.bz2=00;31:*.bz=00;31:*.tz=00;31:*.rpm=00;31:*.cpio=00;31:*.jpg=00;35:*.gif=00;35:*.bmp=00;35:*.xbm=00;35:*.xpm=00;35:*.png=00;35:*.tif=00;35:'
 alias ls='/bin/ls --color=tty'
+
+# Prevent scroll locking
+stty -ixon
+
 
 # Define CSCOPE_DB environment variable
 export FROOT=/vobs/projects/springboard/fabos
 export CSCOPE_DB=$FROOT/cscope/cscope.out
-
-# Prevent scroll locking
-stty -ixon
 
 
 # Shortcut functions *******************************************************************************************************************************************************
