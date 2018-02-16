@@ -92,6 +92,8 @@ if [ -d ~/.vim/ ]; then
 				rm -r ~/.vim
 				# Symlink vim directory
 				ln -s ~/configs/vim ~/.vim
+				# Create tmp directory for .swp files
+				mkdir ~/.vim/tmp/
 				break;;
 			No )
 				# Leave existing version 
@@ -101,6 +103,8 @@ if [ -d ~/.vim/ ]; then
 else
 	# Symlink vim directory
 	ln -s ~/configs/vim/ ~/.vim
+	# Create tmp directory for .swp files
+	mkdir ~/.vim/tmp/ 
 fi
 
 
