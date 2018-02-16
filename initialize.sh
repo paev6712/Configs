@@ -82,45 +82,25 @@ else
 	ln -s ~/configs/vim/.vimrc ~/
 fi
 
-echo "        Install pathogen"
+echo "        Install vim plugins"
 if [ -d ~/.vim/ ]; then
-	if [ -d ~/.vim/autoload/ ]; then
-		if [ -f ~/.vim/autoload/pathogen.vim ]; then
-			echo "            Pathogen already installed. Overwrite?"
-			select yn in "Yes" "No"; do
-				case $yn in
-					Yes )
-						# Remove existing version 
-						rm ~/.vim/autoload/pathogen.vim
-						# Symlink pathogen.vim into scope
-						ln -s ~/configs/vim/autoload/pathogen.vim ~/.vim/autoload/
-						break;;
-					No )
-						# Leave existing version 
-						break;;
-				esac
-			done
-		else
-			# Symlink pathogen.vim into scope
-			ln -s ~/configs/vim/autoload/pathogen.vim ~/.vim/autoload/
-		fi
-	else
-		mkdir ~/.vim/autoload
-		# Symlink pathogen.vim into scope
-		ln -s ~/configs/vim/autoload/pathogen.vim ~/.vim/autoload/
-	fi
+	echo "            .vim directory already exists. Overwrite?"
+	select yn in "Yes" "No"; do
+		case $yn in
+			Yes )
+				# Remove existing directory
+				rm -r ~/.vim
+				# Symlink vim directory
+				ln -s ~/configs/vim ~/.vim
+				break;;
+			No )
+				# Leave existing version 
+				break;;
+		esac
+	done
 else
-	mkdir ~/.vim/
-	mkdir ~/.vim/autoload
-	# Symlink pathogen.vim into scope
-	ln -s ~/configs/vim/autoload/pathogen.vim ~/.vim/autoload/
-fi
-
-
-echo "        Create tmp directory for vim.swp files"
-if [ ! -d ~/.vim/tmp/ ]; then
-	# Create tmp directory
-	mkdir ~/.vim/tmp
+	# Symlink vim directory
+	ln -s ~/configs/vim/ ~/.vim
 fi
 
 

@@ -1,10 +1,13 @@
+#**************************************************
+# ***** Plugins *****
+#**************************************************
+source ~/configs/bash/plugins/git/git-completion.bash
+source ~/configs/bash/plugins/git/git-prompt.sh
 
-# set -a
-set -b
-set -o vi
 
-# Set the prompt style
-# http://www.cyberciti.biz/tips/howto-linux-unix-bash-shell-setup-prompt.html
+#**************************************************
+# ***** Command Prompt *****
+#**************************************************
 
 # Set interface being used
 myTty="$(tty)";
@@ -22,21 +25,44 @@ if [ "$currView" == " ** NONE **" ]; then
 	currView="";
 fi
 
-# Define command prompt
-PS1="[$myTty\[\e[0;33m\]$myShLvl\[\e[m\]\[\e[1;34m\]$currView\[\e[m\]] \[\e[0;32m\]\h:\[\e[m\] \W \[\e[1;38m\]>\[\e[m\] "
-
 # Define colors
 export LS_COLORS='no=00:fi=00:di=00;31:ln=00;36:pi=40;33:so=00;35:bd=40;33;01:cd=40;33;01:or=01;05;37;41:mi=01;05;37;41:ex=00;32:*.cmd=00;32:*.exe=00;32:*.com=00;32:*.btm=00;32:*.bat=00;32:*.sh=00;32:*.csh=00;32:*.tar=00;31:*.tgz=00;31:*.arj=00;31:*.taz=00;31:*.lzh=00;31:*.zip=00;34:*.z=00;31:*.Z=00;31:*.gz=00;31:*.bz2=00;31:*.bz=00;31:*.tz=00;31:*.rpm=00;31:*.cpio=00;31:*.jpg=00;35:*.gif=00;35:*.bmp=00;35:*.xbm=00;35:*.xpm=00;35:*.png=00;35:*.tif=00;35:'
 alias ls='/bin/ls --color=tty'
 
+# Define command prompt
+# Reference: http://www.cyberciti.biz/tips/howto-linux-unix-bash-shell-setup-prompt.html
+export PS1="[\[\e[0;33m\]$myShLvl\[\e[m\]\[\e[1;34m\]$currView\$(__git_ps1)\[\e[m\]] \[\e[0;32m\]\h:\[\e[m\] \W \[\e[1;38m\]>\[\e[m\] "
+
+
+#**************************************************
+# ***** Configuration *****
+#**************************************************
+
 # Prevent scroll locking
 stty -ixon
 
+# set -a
+set -b
+set -o vi
+
+
+#**************************************************
+# ***** Paths *****
+#**************************************************
 
 # Define CSCOPE_DB environment variable
 export FROOT=/vobs/projects/springboard/fabos
-export CSCOPE_DB=$FROOT/cscope/cscope.out
+# Static git folder '/zzz/work40/parker/8.2.1'
+export GIT_FOS_DIR=$(/corp/global/tools/bin/gittools/get_my_workspace)/8.2.1
 
+# Define cscope directory based on clearcase or git
+if [[ -d /vobs/projects/springboard/fabos/src ]]; then
+	echo vobs
+	export CSCOPE_DB="/vobs/projects/springboard/fabos/cscope.out"
+else
+	# Just use static folder for now
+	export CSCOPE_DB="$GIT_FOS_DIR/cscope.out"
+fi
 
 # Shortcut functions *******************************************************************************************************************************************************
 src() {
@@ -50,27 +76,6 @@ build() {
 	elif [ -z "$2" ] ; then	cd /vobs/projects/springboard/build/swbd$1
 	else					cd /vobs/projects/springboard/build/swbd$1/fabos/src/$2
 	fi
-}
-
-cleanOldBuilds() {
-	t=30;
-	if [ $# -ge 1 ]; then
-		t=$1;
-	fi
-	echo "Cleaning builds older than $t days"
-	find /scratch/fos-brm/parker/buildOutput/ -mindepth 1 -maxdepth 1 -type d -ctime +${t} -print -exec rm -rf {} \;
-}
-
-cleanEmptyBuilds() {
-	echo "Removing empty build directories"
-	cd /scratch/fos-brm/parker/buildOutput/ 
-	for d in `ls`; do
-		if [ -d "$d" ]; then
-			if [ -z "`ls $d/`" ]; then
-				rmdir $d;
-			fi
-		fi
-	done
 }
 
 checkCoverity() {
@@ -103,25 +108,6 @@ checkGkApproval() {
 	done
 }
 
-fullPath() {
-	echo "`pwd`/$1"
-}
-
-getSwitchCore () {
-	if [ $# -eq 3 ]; then
-		if [ `expr index $3 "core"` -gt 0 ]; then
-			eswscp root@${1}:/core_files/${2}/"${3}.*" .
-		else
-			eswscp root@${1}:/core_files/${2}/"core.${3}.*" .
-		fi
-	elif [ $# -eq 2 ] ; then
-		eswscp root@${1}:/core_files/${2}/"core.*" .
-	else
-		echo "Error: Invalid usage"
-		echo "$0 <IP> <daemon> [<core name | number>]"
-	fi
-}
-
 gkApprove() {
 	while [ $# -ge 1 ]; do
 		if [ -e $1 ]; then
@@ -132,119 +118,6 @@ gkApprove() {
 		fi
 		shift
 	done
-}
-
-launchBuild() {
-	varFile="/vobs/projects/springboard/make/exported_vars.txt"
-	touch $varFile
-	~parker/bin/startBuild "$@" | tee >(grep "export LAST_BUILD" > $varFile) . $varFile
-	rm $varFile
-}
-
-remSshKnownHost () {
-	if [ $# -eq 1 ]; then
-		cmd="perl -ni -e'print unless (\$_ =~ \"$1\")' ~/.ssh/known_hosts"
-		echo "Command: $cmd"
-		eval $cmd
-	else
-		echo "Expected usage: $FUNCNAME <IP>"
-	fi
-}
-
-tracedecodeview() {
-	if [ -f /vobs/projects/springboard/build/swbd${1}/fabos/src/utils/trace/tracedecode.linux ] ; then
-		/vobs/projects/springboard/build/swbd${1}/fabos/src/utils/trace/tracedecode.linux -a ${2}
-	else
-		/users/home24/swuser/bin/tracedecode -a ${2}
-	fi
-}
-
-tracedecodecompress_710() {
-	while [ $# -gt 1 ]; do
-		~swuser/bin/tracedecode.v71 -a $1 | tracecompact.pl | sort | gzip - > `basename $1 .dmp`.txt.gz;
-		shift;
-	done
-}
-
-tracedecodecompress_fos() {
-	while [ $# -ge 1 ]; do
-		~swuser/bin/tracedecode.FOS -a $1 | tracecompact.pl | sort | gzip - > `basename $1 .dmp`.txt.gz;
-		shift;
-	done
-}
-
-
-supportdecodedir() {
-	if [ -f /vobs/projects/springboard/build/swbd${1}/fabos/src/utils/support/supportDecode.i686 ] ; then
-		/vobs/projects/springboard/build/swbd${1}/fabos/src/utils/support/supportDecode.i686 .
-	else
-		/users/home24/swuser/bin/supportdecode .
-	fi
-}
-
-ctDiffView() {
-	if [ $# -eq 4 ]; then
-		if [ -f $1 ]; then
-			vim -d ${1}@@${2}/${3} ${1}@@${2}/${4}
-		else
-			echo "Not a file: ${1}"
-		fi
-	elif [ `expr index "$1" "@@"` -ne 0 ]; then
-		idx=`expr index "$1" "@@"`
-		fName=`expr substr "$1" 1 $((idx-1))`
-		branch="${1:$((idx+1))}"
-		ver=`expr match "$branch" '.*\/\([0-9]*\)$'`
-		branch="${branch%\/[0-9]*}"
-		vim -d ${fName}@@${branch}/$((ver-1)) ${fName}@@${branch}/${ver}
-	else
-		echo "Invalid parameter count.  Should be $0 <fileName> <branch> <ver1> <ver2>"
-	fi
-}
-
-loadDaemon() {
-	if [ $# -eq 2 ]; then
-		eswssh root@${2} "if [ -f /fabos/libexec/${1}.orig ]; then rm /fabos/libexec/${1}; else mv /fabos/libexec/${1} /fabos/libexec/${1}.orig; fi"
-		eswscp $1 root@${2}:/fabos/libexec/
-		return 0
-	else
-		echo "Invalid parameters: $0 <daemon name> <ip>"
-		return 1
-	fi
-}
-
-loadDaemonReboot() {
-	if [ $# -eq 2 ]; then
-		eswssh root@${2} "if [ -f /fabos/libexec/${1}.orig ]; then rm /fabos/libexec/${1}; else mv /fabos/libexec/${1} /fabos/libexec/${1}.orig; fi"
-		eswscp $1 root@${2}:/fabos/libexec/
-		eswssh root@${2} "yes | reboot"
-		return 0
-	else
-		echo "Invalid parameters: $0 <daemon name> <ip>"
-		return 1
-	fi
-}
-
-saveOriginals() {
-	while [ $# -ge 1 ]; do
-		if [ -f "$1" ]; then
-			mv $1 ${1}.orig
-		else
-			echo "$1 is not a file -> skipping"
-		fi
-		shift;
-	done
-}
-
-makeFspf () {
-	saveFiles=""
-	if [ ! -f ../lib/fspf/libfspf.so.1.0.orig ]; then saveFiles="$saveFiles ../lib/fspf/libfspf.so.1.0"; fi
-	if [ ! -f fspf.orig ]; then saveFiles="$saveFiles fspf"; fi
-	if [ ! -f fspfd.orig ]; then saveFiles="$saveFiles fspfd"; fi
-	
-	if [ "$saveFiles" != "" ]; then saveOriginals $saveFiles; fi
-	
-	make -C ../lib/fspf $@ && make $@
-	return $?
 }
 
 

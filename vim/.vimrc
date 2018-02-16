@@ -28,20 +28,6 @@ execute pathogen#infect('~/configs/vim/plugins/{}')
 " Map sequence of j the k to esc
 inoremap jk <Esc>
 
-" :fu EnableDiffHighlights()
-" :  hi DiffAdd term=bold ctermbg=4
-" :  hi DiffChange term=bold ctermbg=5
-" :  hi DiffDelete term=bold cterm=bold ctermfg=4 ctermbg=6
-" :  hi diffText term=reverse cterm=bold ctermbg=1
-" :endfunction
-" 
-" :fu DisableDiffHighlights()
-" :  hi clear DiffAdd
-" :  hi clear DiffChange
-" :  hi clear DiffDelete
-" :  hi clear DiffText
-" :endfunction
-
 nmap <C-h> :/<C-R>=expand("<cword>")<CR><CR>
 nmap <C-y> :normal ]cdp<CR><CR>
 
@@ -75,6 +61,10 @@ nnoremap <S-l> 5l
 
 " Store swap files in tmp directory
 set directory^=$HOME/.vim/tmp//
+
+" Enable syntax coloring and automatic indentation
+syntax on
+filetype indent plugin on
 
 
 "**************************************************
