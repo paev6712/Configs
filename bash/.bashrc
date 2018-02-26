@@ -19,10 +19,16 @@ if [ $SHLVL -gt 1 ]; then
 	myShLvl="($SHLVL)";
 fi
 
-# Set current view (for clearcase)
-currView=" `cleartool pwv -short`"
-if [ "$currView" == " ** NONE **" ]; then
-	currView="";
+# Check if clearcase exists on system
+if [ command -v foo >/dev/null 2>&1 ]; then
+	# Set current view
+	currView=" `cleartool pwv -short`"
+	if [ "$currView" == " ** NONE **" ]; then
+		currView="";
+	fi
+else
+	# Leave currView blank
+	currView=""
 fi
 
 # Define colors
@@ -51,17 +57,17 @@ set -o vi
 #**************************************************
 
 # Define CSCOPE_DB environment variable
-export FROOT=/vobs/projects/springboard/fabos
+# export FROOT=/vobs/projects/springboard/fabos
 # Static git folder '/zzz/work40/parker/8.2.1'
-export GIT_FOS_DIR=$(/corp/global/tools/bin/gittools/get_my_workspace)/8.2.1
+# export GIT_FOS_DIR=$(/corp/global/tools/bin/gittools/get_my_workspace)/8.2.1
 
 # Define cscope directory based on clearcase or git
 if [[ -d /vobs/projects/springboard/fabos/src ]]; then
 	echo vobs
 	export CSCOPE_DB="/vobs/projects/springboard/fabos/cscope.out"
 else
-	# Just use static folder for now
-	export CSCOPE_DB="$GIT_FOS_DIR/cscope.out"
+	# Define Git folder based on ~/bin/buildCscope.sh
+	export CSCOPE_DB="$(git rev-parse --show-toplevel 2>/dev/null)/cscope/cscope_database.out"
 fi
 
 # Shortcut functions *******************************************************************************************************************************************************

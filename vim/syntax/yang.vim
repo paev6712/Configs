@@ -2,8 +2,7 @@
 " Language: 	YANG
 " Remark:		RFC 6020 http://tools.ietf.org/html/rfc6020
 " Version: 		1
-" Last Change:	2011 Sep 28
-" Maintainer: 	Matt Parker <mparker@computer.org>
+" Last Change:	2/15/18
 "------------------------------------------------------------------
 
 if version < 600
