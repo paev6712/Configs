@@ -1,8 +1,17 @@
 #**************************************************
-# ***** Plugins *****
+# ***** Include Additional Files *****
 #**************************************************
-source ~/configs/bash/plugins/git/git-completion.bash
-source ~/configs/bash/plugins/git/git-prompt.sh
+
+# Check if include directory exists
+if [ -d ~/configs/bash/include ]; then
+	# Include files
+	source ~/configs/bash/include/git/git-completion.bash
+	source ~/configs/bash/include/git/git-prompt.sh
+	source ~/configs/bash/include/brocade/.bashrc_brocade
+else
+	echo "Failed to include additional bashrc files. Please check if
+			Git repo has been installed correctly in ~/configs"
+fi
 
 
 #**************************************************
@@ -51,15 +60,16 @@ stty -ixon
 set -b
 set -o vi
 
+# Default permissions (750)
+umask 027
+
 
 #**************************************************
 # ***** Paths *****
 #**************************************************
 
-# Define CSCOPE_DB environment variable
-# export FROOT=/vobs/projects/springboard/fabos
-# Static git folder '/zzz/work40/parker/8.2.1'
-# export GIT_FOS_DIR=$(/corp/global/tools/bin/gittools/get_my_workspace)/8.2.1
+# Define base Git folder, if exists
+export BASE_GIT_DIR="$(git rev-parse --show-toplevel 2>/dev/null)"
 
 # Define cscope directory based on clearcase or git
 if [[ -d /vobs/projects/springboard/fabos/src ]]; then
@@ -67,83 +77,28 @@ if [[ -d /vobs/projects/springboard/fabos/src ]]; then
 	export CSCOPE_DB="/vobs/projects/springboard/fabos/cscope.out"
 else
 	# Define Git folder based on ~/bin/buildCscope.sh
-	export CSCOPE_DB="$(git rev-parse --show-toplevel 2>/dev/null)/cscope/cscope_database.out"
+	export CSCOPE_DB="$BASE_GIT_DIR/cscope/cscope_database.out"
 fi
 
-# Shortcut functions *******************************************************************************************************************************************************
-src() {
-	if [ -z "$1" ] ; then cd /vobs/projects/springboard/fabos/src
-	else cd /vobs/projects/springboard/fabos/src/$1
-	fi
-}
 
-build() {
-	if [ -z "$1" ] ; then	cd /vobs/projects/springboard/build
-	elif [ -z "$2" ] ; then	cd /vobs/projects/springboard/build/swbd$1
-	else					cd /vobs/projects/springboard/build/swbd$1/fabos/src/$2
-	fi
-}
+#**************************************************
+# ***** Commands *****
+#**************************************************
 
-checkCoverity() {
-	while [ $# -ge 1 ]; do
-		cleartool describe $1 | grep COVMD5SUM > /dev/null
-		if [ $? -eq 0 ]; then
-			covHash=`cleartool describe $1 | grep COVMD5SUM | perl -e 'while(<STDIN>) {m/"([a-f0-9]+)"/; print $1}'`
-			fileHash=`md5sum $1 | awk '{print $1;}'`
-			if [ "$covHash" = "$fileHash" ]; then
-				echo "Matching - $1"
-			else
-				echo "Mismatching - $1"
-			fi
-		else
-			echo "No Coverity - $1"
-		fi
-		shift
-	done
-}
+# Function: commands
+#
+# Description: List available commands. Whenever a command is added or
+#		updated, this should be as well.
+#
+commands() {
+	# Print general commands
+	echo "General commands:"
+	echo
 
-checkGkApproval() {
-	while [ $# -ge 1 ]; do
-		cleartool describe $1 | grep Approve > /dev/null;
-		if [ $? -eq 0 ]; then
-			echo "1 $1";
-		else
-			echo "0 $1";
-		fi
-		shift
-	done
-}
+	# Print Brocade-specific commands
+	brocade_commands
 
-gkApprove() {
-	while [ $# -ge 1 ]; do
-		if [ -e $1 ]; then
-			echo "Approving: $1"
-			gatekeeper -a -f $1
-		else
-			echo "File does not exist: $1"
-		fi
-		shift
-	done
-}
+	echo
+	}
 
-
-builds()	{ cd /scratch/fos-brm/parker/buildOutput; }
-ccmake()	{ cd /vobs/projects/springboard/make; }
-cstyle()	{ perl /vobs/projects/springboard/toolchains/utils/scripts/cstyle "$@"; }
-ct()		{ cleartool "$@"; }
-ctco()		{ cleartool co -unres -nc $@; }
-defectDir() { cd /proj/sj_eng/defects/${1:0:3}000/$1/; }
-fabos()		{ cd /vobs/projects/springboard/fabos; }
-findmerge()	{ cleartool findmerge `cleartool lsco -cview -all -s` -flatest -print; }
-gdb_ppc()	{ /vobs/projects/springboard/toolchains/ppc/gcc-3.4.6-glibc-2.3.6/powerpc-linux/bin/powerpc-linux-gdb "$@"; }
-killBuild()	{ /bin/bash /vobs/projects/springboard/make/.abort_and_cleanup_emake_lsf_build; }
-lsco()		{ cleartool lsco -cview -all -s; }
-lscoa()		{ cleartool lsco -cview -avobs -s; }
-ppc()		{ /vobs/projects/springboard/toolchains/ppc/gcc-3.4.6-glibc-2.3.6/powerpc-linux/bin/powerpc-linux-"$@"; }
-ppc_new()	{ /vobs/projects/springboard/toolchains/ppc/gcc-4.3.74-eglibc-2.8.74-6/powerpc-linux-gnu/bin/powerpc-linux-gnu-"$@"; }
-scratch()	{ cd /scratch/fos-brm/parker/$1; }
-#setview()	{ ~/bin/setview "$@"; }
-swssh()		{ ssh -o UserKnownHostsFile=/dev/null "$@"; }
-swscp()		{ scp -o UserKnownHostsFile=/dev/null "$@"; }
-vd()		{ ~/bin/vd.sh "$@"; }
-vps()		{ cd /vobs/projects/springboard; }
+#cstyle()	{ perl /vobs/projects/springboard/toolchains/utils/scripts/cstyle "$@"; }

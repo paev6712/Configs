@@ -1,5 +1,6 @@
 let g:netrw_dirhistmax  =10
-let g:netrw_dirhist_cnt =3
+let g:netrw_dirhist_cnt =4
 let g:netrw_dirhist_1='/vobs/projects/springboard/fabos/bfos/ipsport_iscsi/platform/sibyte/init'
 let g:netrw_dirhist_2='/users/home101/parker/.vim'
 let g:netrw_dirhist_3='/users/home101/parker/configs/vim/plugins/syntax/yang'
+let g:netrw_dirhist_4='/zzz/work40/parker/git/bsnfos_2/vobs/projects/springboard/fabos/src/config'
