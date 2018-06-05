@@ -1,0 +1,373 @@
+#!/usr/bin/expect
+# File: enableRoot.exp
+# Purpose: Automate process of enabling root access on a switch. In addition,
+#		   this will iterate the password back to default.
+
+
+# ********************************************************* #
+# Sources
+# ********************************************************* #
+source [file join [file dirname [info script]] expectLib.exp]
+
+
+# ********************************************************* #
+# Globals
+# ********************************************************* #
+set rc 0
+set message "SUCCESS - Root Enabled"
+set stars "***********************************************************"
+
+set enable_root 1
+
+
+# ********************************************************* #
+# Procedures
+# ********************************************************* #
+
+#
+# Procedure: changePassword
+#
+# Description: Enters old password and changes it to the new one
+#
+# Inputs:
+#		old_pass:					Old password
+#		new_pass:					New password
+#
+# Outputs:
+#		rc:							Return code
+#		message:						Error message
+#
+# Returns:
+#		Success:					0
+#		Failure:					-1
+#		
+proc changePassword { old_pass new_pass } {
+
+	set rc 0
+	set message ""
+
+	# Use previous password
+	send "$old_pass\r"
+	expect {
+		"Enter new password" {
+			# Expected - set new password
+			send "$new_pass\r"
+			expect {
+				"Re-type new password" {
+					# Expected - confirm new password
+					send "$new_pass\r"
+				}
+				"cannot reuse the old password" {
+					# Unexpected
+					set rc -1
+					set message "FAILURE - Cannot reuse old password"
+					break
+				}
+			}
+		}
+		"Authentication failure" {
+			# Unexpected - incorrect password (current)
+			set rc -1
+			set message "FAILURE - Incorrect (current) password"
+			break
+		}
+	}
+
+	return [list $rc $message]
+}
+
+
+# ********************************************************* #
+# Process arguments 
+# ********************************************************* #
+
+# Expected args:
+#	 * -i, --ip: ip address
+#	 * --password: Just change password
+#	 * -h, --help: print help
+
+# Process passed args
+if { $argc > 0 } {
+	# Step through each arg (for loop)
+	for {set i 0} {$i < $argc} {incr i 1} {
+		set arg [lindex $argv $i];
+
+		# Switch based on flag
+		switch -regex -- "$arg" {
+
+			(^-i)|(^--ip) {
+				# Check if ip address is in correct format
+				set result [ regexp {^(([0-9]{1,3}[\.]){3}[0-9]{1,3})$} [lindex $argv [expr $i + 1]] -> ip ]
+				if { $result != 1 } {
+					puts "\nInvalid ip address: [lindex $argv [expr $i + 1]]";
+					puts "Please input a valid ip address format";
+					exit -1;
+				}
+
+				# Increment counter to next flag
+				set i [expr $i + 1];
+			}
+
+			(^--password) {
+				# Just change password
+				set enable_root 0
+			}
+
+			(^-h)|(^--help) {
+				puts "Expected args:";
+				puts "	* -i, --ip: ip address";
+				puts "	* --password: Just change password";
+				puts "	* -h, --help: print help";
+				exit -1;
+			}
+
+			default {
+				puts "\nUnknown parameter specified: $arg";
+				exit -1;
+			}
+		}
+	}
+} else {
+	puts "\nNo arguments specified";
+	puts "Expected args:";
+	puts "	* -i, --ip: ip address";
+	puts "  * --password: Just change password";
+	puts "	* -h, --help: print help";
+	exit -1;
+}
+
+# Print parameters
+puts "\n$stars\n****** Enable Root\n$stars\n"
+puts "switch ip : $ip";
+
+
+# ********************************************************* #
+# Ping IP Address
+# ********************************************************* #
+
+set result [pingIPAddress $ip]
+# Check for errors
+if { [lindex $result 0] < 0} {
+	set rc [lindex $result 0]
+	set message [lindex $result 1]
+}
+
+
+# ********************************************************* #
+# Enable root account
+# ********************************************************* #
+
+if { $enable_root == 1 } {
+	printSection "SSH to IP Address"
+
+	set adminPass password 
+
+	while 1 {
+		# SSH to IP address
+		spawn ssh admin@$ip
+		expect {
+			# Unexpected: RSA key on switch changed
+			"WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!" {
+				set rc -2
+			}
+
+			# Unexpected: RSA key isn't in known_hosts file
+			"yes/no" {
+				send "yes\r"
+
+				# Fall through to next case
+				exp_continue
+			}
+
+			# Expected: Provide password to copy file to switch
+			"assword" {
+				send "$adminPass\r"
+			}
+		}
+
+		# Check for error
+		if { $rc == 0 } {
+			expect {
+				# Send <C-c>
+				"Use Control-C" {
+					send \003
+					sleep 2
+				}
+		
+				# Do nothing
+				">" {
+				}
+			}
+			
+			send "userconfig --change root -e yes\r"
+			expect {
+				# Success - FOS switch
+				"root will be logged out" {
+					expect ">"
+					send "rootaccess --set all\r"
+					expect {
+						# Success - enabled
+						"confirm to proceed" {
+							send "y\r"
+						}
+		
+						# Success - already enabled
+						"No change" {
+						}
+		
+						# Unexpected response
+						">" {
+							set rc -1
+							set message "FAILURE - FOS unexpected response"
+						}
+					}
+				}
+
+				# Unexpected - root already enabled
+				"No change to account attributes" {
+					expect ">"
+					send "rootaccess --set all\r"
+					expect {
+						# Success - enabled
+						"confirm to proceed" {
+							send "y\r"
+						}
+		
+						# Success - already enabled
+						"No change" {
+						}
+		
+						# Unexpected response
+						">" {
+							set rc -1
+							set message "FAILURE - FOS unexpected response"
+						}
+					}		
+				}
+
+				# Failure - NOS switch
+				"unknown argument" {
+					send "conf\r"
+					expect ">"
+					send "rbridge-id <rb id>"
+				}
+			}
+			send "exit\r"
+		}
+		interact
+			
+		# Check if need to remove key from known_hosts file
+		if { $rc == -2 } {
+			set rc [removeKnownHost $ip]
+			if {$rc == -1 } {
+				set message "FAILURE - Unknown RSA Key"
+				break
+			}
+		} else {
+			break
+		}
+	}
+}
+
+
+# ********************************************************* #
+# Change password
+# ********************************************************* #
+
+if { $rc == 0 } {
+	printSection "SSH to IP Address"
+
+	# {default pass -> temp pass -> temp pass -> default pass}
+	set rootPass {fibranne password password1 fibranne}
+	set pass [lindex $rootPass 0]
+	set pass_cnt 1
+
+	# SSH to IP address
+	spawn ssh root@$ip
+	expect {
+		"assword" {
+			send "$pass\r"
+		}
+		"Are you sure you want to continue" {
+			send "yes\r"
+			expect "assword" {
+				send "$pass\r"
+			}
+		}
+	}
+	expect {
+		# Send <C-c>
+		"Use Control-C" {
+			send \003
+			sleep 2
+		}
+
+		# Change root password
+		"old password" {
+			set old_pass [lindex $rootPass 0]
+			set new_pass [lindex $rootPass 1]
+			set result [changePassword $old_pass $new_pass]
+	
+			# Check for errors
+			if { [lindex $result 0] == -1} {
+				# Exit
+				rc = [lindex $result 0]
+				message = [lindex $result 1]
+				send "exit\r"
+				interact
+	
+				# Print error
+				puts "\n$stars\n$message\n$stars\n"
+				exit -1
+			}
+	
+			# Avoid changing admin password
+			expect {
+				# Send <C-c>
+				"Use Control-C" {
+					send \003
+					sleep 2
+				}
+			}
+	
+			# Increment count
+			set pass_cnt 2
+		}
+		">" {
+			# Do nothing
+		}
+	}
+	
+	# Iterate through remaining passwords
+	for {set i $pass_cnt} {$i < [llength $rootPass]} {incr i} {
+		send "passwd\r"
+		expect {
+			# Change password
+			"old password" {
+				set old_pass [lindex $rootPass [expr $i - 1]]
+				set new_pass [lindex $rootPass [expr $i]]
+				set result [changePassword $old_pass $new_pass]
+	
+				# Check for errors
+				if { [lindex $result 0] == -1} {
+					rc = [lindex $result 0]
+					message = [lindex $result 1]
+					break
+				}
+			}
+		}
+	}
+
+	# Set no timeout for logout
+	send "timeout 0\r"
+	
+	# Exit
+	send "exit\r"
+	interact
+}
+
+
+# ********************************************************* #
+# Display Result 
+# ********************************************************* #
+displayResult $rc $message

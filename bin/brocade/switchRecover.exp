@@ -1,0 +1,2057 @@
+#!/usr/bin/expect
+
+
+
+#! / global/tools/bin/expect
+
+# This script is designed to recover a switch from a bricked state by performing
+# a net install of the firmware and completely wiping out all the old data on the
+# switch.
+#
+# For Questions, Comments, or Assistance, please contact:
+#	Scott Busch (sbusch@brocade.com)
+#
+
+# Default Variables Values
+set default_tftpServerIP 		"10.38.17.248"
+set default_nfsServerIP 		"10.38.2.20"
+set default_nfsRemoteMountDir	"/export/sre/"
+#set default_latestBld			[exec sh -c "basename `ls -1rd /dept/sre/SQA/fos/v7.4.0/v7.4.0_bld?? | sort | tail -n 1`"]
+set default_latestBld			"badBuildDir"
+#set default_bldDir 			"SQA/fos/v7.4.0/${default_latestBld}"
+set default_bldDir 				""
+set default_nfsLocalMountDir 	"/load"
+set default_mountOptions 		"tcp,rsize=32768,wsize=32768,nolock,ro"
+set default_configFileName 		".switch_recovery_config"
+set default_manualBuildSelect 	0
+
+#
+# IP Site Subnets
+#	10.32.xx.xx   San Jose
+#	10.35.xx.xx   San Clara
+#	10.38.xx.xx   Broomfield
+
+
+if {[file exists /users/home40/sbusch/expect/switchRecoverUsage.log]} {
+	if {[file writable /users/home40/sbusch/expect/switchRecoverUsage.log]} {
+		set un $tcl_platform(user);
+		set ts [clock format [clock seconds] -format "%Y-%m-%dT%H:%M:%S"];
+		set hn [info hostname];
+		set f [open /users/home40/sbusch/expect/switchRecoverUsage.log a];
+		puts $f "$ts - $un - $hn: '$argv0 $argv'"
+		close $f
+	}
+}
+
+##########################  Global Variables Section  ##############################
+
+# Device Record
+#	 1st = Switch IP
+#	 2nd = Switch Subnet
+#	 3rd = Switch Gateway
+#	 4th = Switch Name
+#	 5th = Switch Type
+#	 6th = Avocent IP
+#	 7th = Avocent Port
+#	 8th = Avocent Username
+#	 9th = Avocent Password
+#	10th = Boot Image File
+#	11th = Boot Environment ID
+#	12th = Build Path
+#	13th = Post-Install Commands File
+set deviceRecord { "" "" "" "" "" "" "" "" "" "" "" "" "" }
+
+set tftpServerIP		$default_tftpServerIP
+set nfsServerIP			$default_nfsServerIP
+set nfsRemoteMountDir	$default_nfsRemoteMountDir
+set bldDir				$default_bldDir
+set nfsLocalMountDir	$default_nfsLocalMountDir
+set mountOptions		$default_mountOptions
+set configFileName		$default_configFileName
+set manualBuildSelect	$default_manualBuildSelect
+
+set fake_mode			0;
+set verbose				0;
+
+set ipaddr				"";
+set subnetMask			"";
+set gateway				"";
+set deviceName			"";
+set deviceType			"";
+set consoleIP			"";
+set consolePort			"";
+set portUserName		"";
+set portLoginPass		"";
+set imageFile			"";
+set bootType			"";
+
+
+#############################  Procedures Section ##################################
+
+#
+# printHelp
+#	Prints the Help Guide for the script
+#
+# Inputs:
+#	[None]
+#
+# Returns:
+#	[None]
+#
+proc printHelp {} {
+	global argv0;
+	global configFileName
+
+	puts "Switch Recovery/Net Install Script\r";
+	puts "\r";
+	puts "This script is intended to assist with the process or recovering\r";
+	puts "a switch or CP blade that needs up be updated, restored, or recovered.\r";
+	puts "The device will be completely reset back to the original settings and\r";
+	puts "data on the flash cards lost.";
+	puts "\r";
+	puts "Correct script usage is:\r";
+	puts "    $argv0                         Print Full Help Guide\r";
+	puts "    $argv0 \[-h|--help_short\]       Print Short Help Guide\r";
+	puts "    $argv0 \[--help|--help_full\]    Print Full Help Guide\r"
+#	puts "    $argv0 --writeConfig\r";
+#	puts "    $argv0 --supportedDevices\r";
+	puts "    $argv0 <Switch IP> <Switch Subnet Mask> <Avocent IP> <Avocent Port> <Avocent Port Username> <Avocent Password> <Switch Type>\r";
+	puts "    $argv0 \[options\] (See below for details)\r";
+	puts "\r";
+	puts "Options:\r";
+	puts "    There are three required options that must be provided and more that are optional.  The options can\r";
+	puts "    be supplied in any order, however, latter values will overwrite earlier ones.\r"
+	puts "  Required Options:\r";
+	puts "    -a|--avocent    Specifies the Avocent information to be used.\r";
+	puts "        <IP Address> <Port> \[<Port User Name> \[<Port Password>\]\]\r";
+	puts "           The IP and Port values must be specified.  The user name and password are optional and will\r";
+	puts "           result to default values if not specified: \"port#\" and \"pass\" respectively.\r";
+	puts "    -s|--switch     Specifies the Switch information to be used.\r";
+	puts "        <Switch IP>/<CIDR>  or  <Switch IP> <SubnetMask>\r";
+	puts "           One of these two formats must be specified to obtain the required information.  The CIDR class \r";
+	puts "           or full subnet mask can be specified. The <CIRD> value has the format: /<value>.  (Ex: /24 = 255.255.255.0)\r";
+	puts "    -t|--type       Specifies the switch type.\r";
+	puts "        <Switch Type>  or  <Switch Number>\r";
+	puts "           Must supply what type of switch or blade will be recovered.  It is\r";
+	puts "           possible to use either the name (ex: spirit) or number (ex: 5100).\r";
+	puts "  Optional Parameters:\r";
+	puts "    -b|--build      Specifies the build source directory on the NFS Remote Mount Directory.\r";
+	puts "        <Path>\r";
+	puts "           Specifies the relative path on the NFS mount point for the build directory.\r";
+#	puts "    --fake          Process all options but stop before starting recovery process. (No Additional Values)\r";
+#	puts "    -f|--file       Specify a file for all configuration values.\r";
+#	puts "        <Path>\r";
+#	puts "           Path to a local file containing configuration values.  See documentation for more details.\r";
+	puts "    -m|--manual     Manually select build directory. (No Additional Values)\r";
+	puts "    -n|--name       Specify the device or blade's new name.\r";
+	puts "        <switch name>\r";
+	puts "           Specify the new name for the switch or blade.  Name can contain: A-Z, a-z, 0-9, and underscore (_).\r";
+	puts "    -r|--release    Specify the FabOS version and buid from offical releases to use";
+	puts "        <FOS Ver>:<BLD>\r  (ex: v6.3.0:bld10)";
+	puts "    --nfs           Specify the NFS server and mount point information.\r";
+	puts "        <Server IP>\[:<Mount Point>\]\r";
+	puts "           Specify the NFS server IP address as well as the remote mount point on the server.\r";
+	puts "    --tftp          Specify the TFTP server IP address.\r";
+	puts "        <Server IP>\r";
+	puts "           Specify the TFTP Server IP address to be used during the net boot.\r";
+	puts "    -v|--verbose    Enable verbose mode. (No Additional Values)\r";
+	puts "\r";
+	puts "Notes:\r"
+	puts " * The switch should be in 1 of 3 states for the script to take over:\r";
+	puts "   1) At the switch logon prompt and able to be logged in successfully\r";
+	puts "   2) Current logged in and at the shell prompt.\r";
+	puts "   3) In the boot environment command prompt.\r";
+	puts "   The script is designed to take over when the switch is in one of these states and stable.\r";
+	puts " * For DCX CP Blades, will only work for the Standby CP.  Behavior of recovering the Active CP may be undefined.\r"
+	puts " * For DCX CP Blades, the switch type needs to be the name of the blade that is attempting to be recovered\r";
+	puts "   (ex: \"neptune\" or \"zentron\" instead of \"dcx\").\r"
+	puts " * To change any IP addresses, paths, or options for the TFTP Server, Firmware Source Mount Point, \r";
+	puts "   or Build Directory, see the trailing section on editing your local configuration file.\r";
+	puts "\r";
+#	puts "Example Usages:\r";
+#	puts "    $argv0  -> Display's this help guide.\r";
+#	puts "    $argv0 --help|-h  -> Display's this help guide.\r";
+#	puts "    $argv0 --writeConfig  -> Force writing the default config values to the\r";
+#	puts "        configuration file (Location: ~\[userName\]/$configFileName )\r";
+#	puts "    $argv0 172.16.22.10 255.255.255.0 172.16.22.201 3001 port1 pass spirit\r";
+#	puts "        -> This will recover the Spirit at IP 172.16.22.10 with IP Block\r";
+#	puts "        Netmask 255.255.255.0.  It will use the Avocent at 172.16.22.201\r";
+#	puts "        to connect to the switch using port 3001 and login port1/pass.\r";
+#	puts "\r";
+#	puts "\r";
+#	puts "Customizing the recovery process:\r";
+#	puts "  The host used for the TFTP server and the NFS mount point for the firmware\r";
+#	puts "  can be customized by editing a file in the current user's home directory.\r";
+#	puts "  The file ~\[userName\]/$configFileName contains some of the variable values\r";
+#	puts "  that can be changed to control where the net_install image is pulled from\r";
+#	puts "  via TFTP, or what server to perform the NFS mount from, path to the\r";
+#	puts "  firmware on the server, the build directory to use, and NFS mount options.\r";
+#	puts "  Call $argv0 --writeConfig to generate the file and then edit it to change.\r";
+#	puts "\r";
+	puts "\r";
+	puts "For any questions, comments, or problems, please contact:\r"
+	puts "Scott Busch (sbusch@brocade.com)\r";
+#	puts "\r";
+#	puts "For any problem's during usage, please include the output to help debugging.\r";
+}
+
+
+proc printHelp_Short {} {
+
+	global argv0;
+
+	puts "Switch Recovery / Net Install Script\r";
+	puts "\r";
+	puts "This script is intended to assist with and/or automate the process of\r";
+	puts "recovering a switch or CP blade.  After running this procedure, the switch\r";
+	puts "or blade will be completely reset back to factory defaults of the specified\r";
+	puts "firmware version and the flash card wiped clean.\r";
+	puts "\r";
+	puts "There are two sets of command line options that are available. The original\r";
+	puts "options are all still available.  However, the new options provide extended\r";
+	puts "functionality and customization.\r"
+	puts "\r";
+	puts "Usage:\r";
+	puts "$argv0                       Print the help guide (Full Help).\r";
+	puts "$argv0 \[-h|--help_short\]     Print the short help guide\r";
+	puts "$argv0 \[--help|--help_full\]  Print the full help guide\r";
+#	puts "$argv0 --writeConfig\r";
+	puts "$argv0 <Switch IP> <Switch Subnet> <Avocent IP> <Avocent Port> <Avocent Username> <Avocent Password> <Switch Type>\r";
+	puts "$argv0 \[options\]\r";
+	puts "\tRequired Paramters:\r";
+	puts "\t\t-a|--avocent    <Console IP> <Console Port> \[<Username> \[<Password>\]\]\r";
+	puts "\t\t-s|--switch     (<Switch IP>/<CIDR Mask>)|(<Switch IP> <Subnet Mask>)\r";
+	puts "\t\t-t|--type       <Switch Type>|<Switch Number> (ex: Spirit or 5100)\r";
+	puts "\tOptional Parameters:\r";
+	puts "\t\t-b|--build      <Path>  (Path to build diretory relative to NFS Remote Mount Directory (Can be \"\" (blank)))\r";
+#	puts "\t\t--fake          Parse command line and read config or other files but stop after summary.\r";
+#	puts "\t\t-f|--file       <FilePath>  (Path to local file with configuration values.)\r";
+	puts "\t\t-m|--manual     Manually select build directory once mounted\r";
+	puts "\t\t-n|--name       <Switch name>\r";
+	puts "\t\t-r|--release    <FOS Ver>:<BLD>\r";
+	puts "\t\t--nfs           <NFS Server IP>\[:<NFS Remote Dir>\]  (NFS Server and Mount Point)\r";
+	puts "\t\t--tftp          <TFTP Server IP>\r";
+	puts "\t\t-v|--verbose    Print additional information along the way.\r"
+	puts "\r";
+	puts "For any questions, comments, or problems, please contact:\r"
+	puts "Scott Busch (sbusch@brocade.com)\r";
+
+}
+
+#
+# processCmdLine
+#	Does the inital processing of some of the command line flags, if any have been
+#	supplied.  Check for the help requests, configuration file writing, database
+#	lookup alternative, or for parameters to be supplied directly.
+#
+# Inputs:
+#	[None]
+#
+# Returns:
+#	[None]
+#
+proc processCmdLine {} {
+
+	global argc;
+	global argv;
+	global deviceRecord;
+	global manualBuildSelect;
+	global fake_mode;
+	global verbose;
+
+	global ipaddr;
+	global subnetMask;
+	global gateway;
+	global deviceType;
+	global consoleIP;
+	global consolePort;
+	global portUserName;
+	global portLoginPass;
+
+	if { $verbose == 1 } {
+		send_user -- "$argc\r\n"
+	}
+
+	if { $argc > 0 } {
+
+		if {$argc == 7 && [string match "-*" [lindex $argv 0]] != 1 } {
+			# Default command line with all options
+			send_user "Perhaps a full dataset on command line\r\n"
+			set deviceRecord [processCmdLineOptions $argc $argv];
+
+		} else {
+
+			for {set i 0} {$i < $argc} {incr i 1} {
+
+				set arg [lindex $argv $i];
+				if { $verbose == 1 } {
+					send_user -- "$arg\r\n";
+				}
+
+				switch -regex -- "$arg" {
+
+					(^-a)|(^--avocent) {
+						if { $verbose == 1 } {
+							send_user -- "Getting Avocent Information\r\n";
+						}
+						set result [ getAvocentInformation $i $argc $argv ];
+
+						if { $result == -1 } {
+							return $result;
+						} else {
+							set i [ expr $i + $result ];
+						}
+					}
+					(^-b$)|(^--build$) {
+						if { $verbose == 1 } {
+							send_user -- "Setting Build Directory\r\n";
+						}
+						set result [ getBuildInformation $i $argc $argv ];
+
+						if { $result == -1 } {
+							return $result;
+						} else {
+
+							set i [ expr $i + $result ];
+						}
+					}
+					(^--fake$) {
+						if { $verbose == 1 } {
+							send_user -- "Running in Fake Mode\r\n";
+						}
+						set fake_mode 1;
+					}
+					(^-f$)|(^--file$) {
+						if { $verbose == 1 } {
+							send_user -- "Using configuration file\r\n";
+						}
+						set result [ processInputsFile $i $argc $argv ];
+
+						if { $result == -1 } {
+							return $result;
+						} else {
+							set i [ expr $i + $result ];
+						}
+					}
+					(^-h$)|(^--help_short$) {
+						printHelp_Short;
+						exit 0;
+					}
+					(^--help$)|(^--help_full$) {
+						printHelp;
+						exit 0;
+					}
+					(^-m$)|(^--manual$) {
+						if { $verbose == 1 } {
+							send_user -- "Setting Manual Build Selection Option\r\n";
+						}
+						set manualBuildSelect 1;
+					}
+					(^-n$)|(^--name$) {
+						if { $verbose == 1 } {
+							send_user -- "Getting Custom Switch Name Information\r\n";
+						}
+						set result [ getSwitchName $i $argc $argv ];
+
+						if { $result == -1 } {
+							return $result;
+						} else {
+							set i [ expr $i + $result ];
+						}
+					}
+					(^--nfs$) {
+						if { $verbose == 1 } {
+							send_user -- "Setting NFS Mount Information\r\n";
+						}
+						set result [ getNfsServerInformation $i $argc $argv ];
+
+						if { $result == -1 } {
+							return $result;
+						} else {
+							set i [ expr $i + $result ];
+						}
+					}
+					(^-r$)|(^--release$) {
+						if { $verbose == 1 } {
+							send_user -- "Setting Release Information"
+						}
+						set result [ getReleaseInformation $i $argc $argv ];
+
+						if { $result == -1 } {
+							return $result;
+						} else {
+							set i [ expr $i + $result ];
+						}
+					}
+					(^-s$)|(^--switch$) {
+						if { $verbose == 1 } {
+							send_user -- "Getting switch information\r\n";
+						}
+						set result [ getSwitchInformation $i $argc $argv ];
+
+						if { $result == -1 } {
+							return $result
+						} else {
+							set i [ expr $i + $result ];
+						}
+					}
+					(^--tftp$) {
+						if { $verbose == 1 } {
+							send_user -- "Setting TFTP Information\r\n";
+						}
+						set result [ getTftpServerInformation $i $argc $argv ];
+
+						if { $result == -1 } {
+							return $result;
+						} else {
+							set i [ expr $i + $result ];
+						}
+					}
+					(^-t$)|(^--type$) {
+						if { $verbose == 1 } {
+							send_user -- "Getting Device Type Information\r\n";
+						}
+						set result [ getTypeInformation $i $argc $argv ];
+
+						if { $result == -1 } {
+							return $result;
+						} else {
+							set i [ expr $i + $result  ];
+						}
+					}
+					(^-v$)|(^--verbose$) {
+						send_user -- "Setting verbose mode\r\n";
+						set verbose 1;
+					}
+					(^--writeConfig$) { 
+						if { $i != 0 || $argc > 1 } {
+							send_user -- "Error: $arg must occur by itself\r\n";
+							exit -1;
+						} else {
+							if { $verbose == 1 } {
+								send_user -- "Writing default configuration file\r\n";
+							}
+							set result [ writeConfigDefaults ];
+							exit 0;
+						}
+					}
+					(^-k$)|(^--kernel$) {
+						send_user -- "Setting the Kernel Version\r\n";
+						send_user -- "ERROR: Feature not implemented yet\r\n";
+						exit -1;
+					}
+					(^-p$)|(^--post$) {
+						send_user -- "Setting Post Install Script\r\n";
+						send_user -- "ERROR: Feature not implemented yet\r\n";
+						exit -1;
+					}
+
+					default {
+						send_user -- "Unknown Parameter Specified: $arg\r\n";
+						exit -1;
+					}
+				}
+			}
+
+			# Verify required parameters
+			if { $ipaddr == "" || $subnetMask == "" || $gateway == "" } {
+
+				send_user "ERROR: Missing some required switch information.\r\n";
+				send_user "Check the help for the \"-s|--switch\" option.\r\n";
+				exit -1;
+			}
+
+			if { $deviceType == "" } {
+				send_user "ERROR: Missing some required type information.\r\n";
+				send_user "Check the help for the \"-t|--type\" option.\r\n";
+				exit -1;
+			}
+
+			if { $consoleIP == "" || $consolePort == "" \
+				|| $portUserName == "" || $portLoginPass == "" } {
+
+				send_user "ERROR: Missing some required Avocent information.\r\n";
+				send_user "Check the help for the \"-a|--avocent\" option.\r\n";
+				exit -1;
+			}
+		}
+
+	} else {
+		printHelp
+		exit 0;
+	}
+
+	return 1;
+}
+
+
+#
+# writeConfigDefaults
+#	Write the default user configuration file to their home
+#	directory.  Include the default script values (as examples)
+#	for valid values to be supplied.  If the file exists already,
+#	it will be overwritten for these default values.
+#
+proc writeConfigDefaults {} {
+
+	# Get all the global configuration values
+	global default_configFileName;
+	global default_tftpServerIP;
+	global default_nfsServerIP;
+	global default_nfsRemoteMountDir;
+	global default_bldDir;
+	global default_nfsLocalMountDir;
+	global default_mountOptions;
+	global default_manualBuildSelect;
+	global verbose;
+
+	# Get Current Logged in User
+	set userName [exec printenv USER];
+
+	if { [string length $userName] <= 2 } {
+		# Bad username (most likely)
+		return -1;
+	}
+
+	# Catch to clear out file when it should be written due to writeOnly command
+	exec rm -f ~$userName/$default_configFileName
+
+	# Open the file
+	set configFile [open "~$userName/$default_configFileName" "w"];
+
+	# Write the necessary variable names and values to the file (one per line)
+	puts $configFile "# Specify to use script settings or override with these: (y/Y/n/N)";
+	puts $configFile "useDefaults=y";
+
+	puts $configFile "# IP of tftp server host:";
+	puts $configFile "tftpServerIP=$default_tftpServerIP";
+
+	puts $configFile "# IP of NFS mount point host:";
+	puts $configFile "nfsServerIP=$default_nfsServerIP";
+
+	puts $configFile "# Path to install directory (not incluing specific build)";
+	puts $configFile "nfsRemoteMountDir=$default_nfsRemoteMountDir";
+
+	puts $configFile "# Directory name of build to use for firmware source";
+	puts $configFile "bldDir=$default_bldDir";
+
+	puts $configFile "# Path on switch of where to mount NFS directory";
+	puts $configFile "nfsLocalMountDir=$default_nfsLocalMountDir";
+
+	puts $configFile "# Options to use for call to mount command";
+	puts $configFile "mountOptions=$default_mountOptions";
+
+	puts $configFile "# Manually select build directory (0=No, 1=Yes)";
+	puts $configFile "manualBuildSelect=$default_manualBuildSelect";
+
+	puts $configFile "# Enable Verbose Mode (0=No, 1=Yes)";
+	puts $configFile "verbose=$verbose";
+
+	# Close the file (also flushes it)
+	close $configFile;
+
+	return 0;
+}
+
+
+#
+# processInputsFile
+#	Reads a source file for variable values.  It will read each line
+#	consisting of a <varName> = <value> pair.  It will then set the
+#	variable's value.  Finally, there are a couple post-processing
+#	clean-up actions that fill in some missing and/or default
+#	values.
+proc processInputsFile { arg_num argc argv } {
+
+	global verbose;
+
+	# Check for valid parameters supplied
+	if { [expr $arg_num + 1] >= $argc || [string match "-*" [lindex $argv [expr $arg_num + 1]]] == 1 } {
+		send_user "ERROR: Missing required parameter.\r\n";
+		send_user "Must supply an input file name with the \"[lindex $argv $arg_num]\" flag.\r\n";
+		return -1;
+	}
+
+	# Set the file name
+	set fileName [lindex $argv [expr $arg_num + 1]];
+
+	# Make sure the file exist
+	if { [file exists $fileName] != 1 } {
+		send_user "The supplied file does not exist: $fileName\r\n";
+		send_user "Using defaults instead.\r\n";
+		return 1;
+	}
+
+	# Read values from file
+	set configFile [open "$fileName" "r"];
+
+	# Read in a line of the file and keep going until the end
+	while { [gets $configFile line] != -1 } {
+
+		# Check if the line has a "#" in it -> comment not to be processed
+		if { [string first "#" $line] == -1 } { 
+
+			# Grab the variable name and value from the line
+			if { [regexp {([a-zA-Z0-9_]+)(?:[\s=]+)(\S+)} $line line var value ] == 1 } {
+				if { $verbose == 1 } {
+					send_user "Read pair: \"$var\" = \"$value\"\r\n";
+				}
+				global $var;
+				set $var $value
+			}
+		}
+	}
+
+	# Grab extra device information if not supplied
+	if { [info exists imageFile] != 1 || [info exists bootType] != 1 } {
+		if { [info exists deviceType] == 1 && $deviceType != "" } {
+			set result [ getTypeInformation 0 2 [list "-t" "$deviceType"] ];
+			if { $result == -1 } {
+				return $result;
+			}
+		}
+	}
+
+	# Set any missing avocent information
+	if { [info exists consoleIP] == 1 && [info exists consolePort] == 1 } {
+
+		# Check for a supplied username
+		if { [info exists portUserName] != 1 } {
+			global portUserName;
+			if { $portUserName == "" } {
+				set portUserName "port[expr $consolePort % 100]";
+			}
+		}
+
+		# Check for a supplied password
+		if { [info exists portLoginPass] != 1 } {
+			global portLoginPass;
+			if { $portLoginPass == "" } {
+				set portLoginPass "pass";
+			}
+		}
+	}
+
+	# Return successful / skip 1 command line parameter (the filename)
+	return 1;
+}
+
+
+#
+# getSwitchInformation
+#	Parse the switch information from the command line parameters.
+#	Reads for the IP and CIDR mask or manual subnet value.  Using these
+#	values, it then calculates the gateway for the device.  It does check
+#	for valid IP address format to be used.
+#
+proc getSwitchInformation { arg_num argc argv } {
+
+	global ipaddr;
+	global subnetMask;
+	global gateway;
+	global verbose;
+	global tftpServerIP;
+	global default_tftpServerIP;
+	global nfsServerIP;
+	global default_nfsServerIP;
+
+	set skip 0;
+
+	# Check for the IP address and optional CIDR value
+	if { [expr $arg_num + 1] >= $argc || [string match "-*" [lindex $argv [expr $arg_num + 1]]] == 1 } {
+		send_user "Missing Parameters for Switch Information.\r\n"
+		send_user "See help guide for \"[lindex $argv $arg_num]\" help.\r\n";
+		return -1;
+	}
+
+	# Grab IP address and try to get CIDR class ( /xx )
+	set result [ regexp {^((?:[0-9]{1,3}[\.]){3}[0-9]{1,3})(/([0-9]{1,2}))?$} [lindex $argv [expr $arg_num + 1]] line ip slash_cidr cidr ];
+	if { $result == 0 } {
+		send_user "Invalid IP or Optional CIDR mask specified: [lindex $argv [expr $arg_num + 1]]\r\n";
+		send_user "Please correct and try again.\r\n";
+		return -1;
+	}
+
+	# Check if CIDR mask was included
+	if { $cidr == "" } {
+
+		# Check for the correct number of parameters
+		if { [expr $arg_num + 2] >= $argc || [string match "-*" [lindex $argv [expr $arg_num + 2]]] == 1 } {
+			send_user "Missing Parameters for Switch Information.\r\n"
+			send_user "See help guide for \"[lindex $argv $arg_num]\" help.\r\n";
+			return -1;
+		}
+
+		set skip 2;
+
+		# Next parameter should be Subnet
+		set result [ regexp {^((?:[0-9]{1,3}[\.]){3}[0-9]{1,3})$} [lindex $argv [expr $arg_num + 2]] line subnet ];
+		if { $result == 0 } {
+			send_user "Invalid Subnet Specified: [lindex $argv [expr $arg_num + 2]]\r\n"
+			send_user "Please correct and try again.\r\n";
+			return -1;
+		}
+
+	} else {
+
+		set skip 1;
+
+		# Decode CIDR value to Subnet
+		set mask [expr 0xffffffff >> [expr 32 - $cidr ] << [expr 32 - $cidr]];
+
+		# Append together the subnet components
+		set subnet [expr $mask >> 24 ];
+		lappend subnet [expr [expr $mask >> 16 ] & 0xFF]
+		lappend subnet "[expr [expr $mask >> 8  ] & 0xFF]"
+		lappend subnet "[expr $mask & 0xFF]"
+
+		# Set the final subnet string
+		set subnet [join $subnet "."];
+	}
+
+	# Calculate the device gateway
+	set gw [ calculateGateway $ip $subnet ];
+
+	# Set the default TFTP server for each site
+	# if { $tftpServerIP == $default_tftpServerIP } {
+		# set siteTftpIP [list 10 -1 2 40];
+		# set siteTftpIP [lreplace $siteTftpIP 1 1 [lindex [split $ip "."] 1]]
+		# set tftpServerIP [join $siteTftpIP "."]
+	# }
+
+	# Set the default NFS server for each site
+	if { $nfsServerIP == $default_nfsServerIP } {
+		set siteNfsIP [list 10 -1 2 20];
+		set siteNfsIP [lreplace $siteNfsIP 1 1 [lindex [split $ip "."] 1]]
+		set nfsServerIP [join $siteNfsIP "."]
+	}
+
+	if { $verbose == 1 } {
+		send_user "skip = $skip; ip = $ip; subnet = $subnet; gateway = $gw;\r\n";
+	}
+
+	set ipaddr $ip;
+	set subnetMask $subnet;
+	set gateway $gw;
+
+	return $skip;
+}
+
+
+#
+# getAvocentInformtion
+#	Parse the avocent flag from the command line.  There are two
+#	required values associated with this flag and two optional values.
+#	The required values are the IP and Port number for the desired
+#	switch.  The two optional are the port user name and port pasword.
+#	The default user name is: port#
+#	The default password is: pass
+#
+#	-a|--avocent <IP> <Port> [<Username> [<Password>]]
+#
+# Returns:
+#	-1 = Error somewhere during processing or invalid values supplied
+#	[skip IP Port User Pass] =
+#		skip = Number of parameters used by this flag and can now be skipped over
+#		IP   = Console IP
+#		Port = Console Port
+#		User = Console User Name
+#		Pass = Console Password
+#
+proc getAvocentInformation { arg_num argc argv } {
+
+	global consoleIP;
+	global consolePort;
+	global portUserName;
+	global portLoginPass;
+	global verbose;
+
+	# Default Skip is the flag only
+	set skip 0;
+
+	# Check for the two required parameters are present
+	if { [expr $arg_num + 2] >= $argc } {
+		send_user "Missing Required Parameters.\r\n";
+		send_user "See the help for \"[lindex $argv $arg_num]\".\r\n";
+		return -1;
+	}
+
+	# Check and grab formatting on IP address for console
+	set result [ regexp {^((?:[0-9]{1,3}[\.]){3}[0-9]{1,3})$} [lindex $argv [expr $arg_num + 1]] line ip ];
+	if { $result != 1 } {
+		send_user "Invalid value for Avocent IP: [lindex $argv [expr $arg_num + 1]]\r\n";
+		send_user "Please correct and try again\r\n";
+		return -r;
+	}
+
+	# Check and grab port number for console
+	set result [ regexp {^([0-9]{1,5})$} [lindex $argv [expr $arg_num + 2]] line port ];
+	if { $result != 1 } {
+		send_user "Invalid value for Avocent Port Number: [lindex $argv [expr $arg_num + 2]]\r\n";
+		send_user "Please corrent and try again\r\n";
+		return -1;
+	}
+
+	# Verify Skipping of two required parameters
+	set skip 2;
+
+	# Check for third parameter
+	if { [expr $arg_num + 3] >= $argc || [string match "-*" [lindex $argv [expr $arg_num + 3]]] == 1 } {
+		# No third parameter -> Implies no fourth either
+		# Use default user name and password
+		set user "port[expr $port % 100]";
+		set pass "pass";
+	} else {
+
+		# Set the User name and update skip field
+		set user [lindex $argv [expr $arg_num + 3]];
+		set skip 3;
+
+		# Check for fourth (password) parameter
+		if { [expr $arg_num + 4] >= $argc || [string match "-*" [lindex $argv [expr $arg_num + 4]]] == 1 } {
+			# Use default, no fourth or fourth is the next flag
+			set pass "pass"
+		} else {
+			# Save the password and update skip field
+			set pass "[lindex $argv [expr $arg_num + 4]]";
+			set skip 4;
+		}
+	}
+
+	# Confirm details
+	if { $verbose == 1 } {
+		send_user "skip = $skip; ip = $ip; port = $port; user = $user; pass = $pass\r\n";
+	}
+
+	# Set values
+	set consoleIP $ip;
+	set consolePort $port;
+	set portUserName $user;
+	set portLoginPass $pass;
+
+	# Return Information
+	return $skip;
+}
+
+#
+# getTypeInformation
+#	Looks up the correct information for the specified device type.
+#
+# Old Version:
+#	Set arg_num equal to the device type value.
+#	
+# 	Returns:
+#		[empty list] = No record found for the specified device
+#		{-1} = Record not populated yet
+#		{[imageName] [BootEnvironementID]} = Device data
+#
+# New Version:
+#	Supply command line parameters and values for parsing as normal.
+#
+#
+proc getTypeInformation { arg_num {argc -1} {argv ""} } {
+
+	global deviceType;
+	global imageFile;
+	global bootType;
+	global verbose;
+
+	set skip 0;
+
+	# Check for compatability with old verserion
+	if {$argc != -1 } {
+
+		# New version, need to check command line parameters
+		if { [expr $arg_num + 1] >= $argc || [string match "-*" [lindex $argv [expr $arg_num + 1]]] == 1 } {
+			send_user "Missing parameter.  No value supplied for \"[lindex $argv $i]\" field.\r\n";
+			send_user "Please see the help for \"[lindex $argv $i]\".\r\n";
+			return -1;
+		}
+	
+		# Set the device type from the command line
+		set devType [string tolower [lindex $argv [expr $arg_num + 1]]];
+
+	} else {
+		# Set the device type from the supplied parameters
+		set devType $arg_num;
+	}
+
+	set skip 1;
+
+	send_user "devType = $devType\r\n"
+
+	# Search for the device type and grab associated information
+	switch -re -- $devType  {
+		(^200$)|(^b200e$)				{ set l [list net_install26_440.img 1];}
+		(^300$)|(^tomahawk$)			{ set l [list net_install_440epx.img 2]; }
+		(^4100$)|(^pulsar$)				{ set l [list -1]; }
+		(^4900$)|(^viking$)				{ set l [list -1]; }
+		(^5000$)|(^pulsar2$)			{ set l [list net_install26_440.img 1]; }
+		(^5100$)|(^spirit$)				{ set l [list net_install_440epx.img 2]; }
+		(^5300$)|(^thor$)				{ set l [list net_install26_8548.img 2]; }
+		(^7500$)|(^sprint$)				{ set l [list net_install26_440gx.img 1]; }
+		(^7800$)|(^spike$)				{ set l [list net_install26_spike.img 2]; }
+		(^gladius$)						{ set l [list net_install_gladius.img 2]; }
+		(^neptune)|(^zentron)|(^dcx)|(^pluto)|(^8510)
+										{ set l [list net_install26_8548.img 2]; }
+		(^saturn$)						{ set l [list net_install26_440gx.img 1]; }
+		(^frisco$)						{ set l [list net_install26_frisco.img 2]; }
+		(^7600$)|(^sabre$)				{ set l [list net_install26_440gx.img 1]; }
+		(^elara$)           			{ set l [list net_install26_elara2.img 2]; }
+		(^elara2$)|(^callisto24$)|(^callisto60$)|(^6720$)|(^callisto$)
+										{set l [list hari/uImage.8548 3]; }
+		(^callisto-hydra$)				{set l [list bchin/uImage.cal 3]; }
+		(^callisto-hercules$)			{set l [list uImage_Elara2x_Callistox_0512 3]; }
+		(^carme$)						{set l [list uImage-carme-1029 3]; }
+		(^stinger_v71$)					{ set l [list net_install26_stinger.img 2];  # This is for pre FOS v7.2}
+		(^stinger$)|(^6510$)			{ set l [list net_install_v7.2.img 2]; }
+		(^tomtoo_71$)					{ set l [list net_install26_tomtoo.img 2]; }
+		(^tomtoo$)						{ set l [list net_install_v7.2.img 2]; }
+		(^odin$)						{ set l [list net_install26_odin.img 2]; }
+  		(^mercury$)						{ set l [list "Multiple image file names" 4]; }
+  		(^castor$)|(^castor-t$)			{ set l [list "Multiple image file names" 5]; }
+  		(^skybolt$)|(^7840$)|(^solo$)	{ set l [list "Multiple image file names" 6]; }
+  		(^yoda$)						{ set l [list "Multiple image file names" 7]; }
+  		(^wedge$)|(^g620$)				{ set l [list "Multiple image file names" 8]; }
+  		(^rigel$)						{ set l [list "Multiple image file names" 9]; }
+  		(^allegiance$)|(^venator$)|(^lando$)	{ set l [list "Multiple image file names" 10]; }
+  		(^chewbacca$)|(^g610$)			{ set l [list "Multiple image file names" 11]; }
+  		(^rigelmor$)					{ set l [list "Multiple image file names" 12]; }
+  		(^tyr$)|(^g630$)				{ set l [list "Multiple image file names" 13]; }
+  		(^amp$)							{ set l [list "Multiple image file names" 14]; }
+		default	{ set l [list 0 ]; }
+	}
+
+	send_user "$l\r\n"
+
+	# Compatability with old format
+	if { $argc == -1 } {
+		return $l;
+	}
+
+	# Check for invalid result from device search
+	if { $l == -1 } {
+		send_user "Mising device information.  Device collection needs to be updated.\r\n";
+		send_user "Contact Scott Busch (sbusch@brocade.com) or update script manually.\r\n";
+		return -1;
+	}
+
+	if { $l == 0 } {
+		send_user "Unknown device specified: $devType\r\n";
+		send_user "Please correct and try again.\r\n";
+		return -1;
+	}
+
+	# Confirm values
+	if { $verbose == 1 } {
+		send_user "skip = $skip; imageFile = [lindex $l 0]; boot_env_id = [lindex $l 1];\r\n";
+	}
+
+	# Set the values
+	set deviceType $devType;
+	set imageFile [lindex $l 0];
+	set bootType [lindex $l 1];
+
+	return $skip;
+}
+
+
+#
+# getSwitchName
+#	Parse the new device name from the command line.  The name can contain
+#	only the characters: a-z, A-Z, 0-9, and underscore (_).
+#
+proc getSwitchName { arg_num argc argv } {
+
+	global deviceName;
+	global verbose;
+
+	set skip 0;
+
+	# Check for required parameters
+	if { [expr $arg_num + 1] >= $argc || [string match "-*" [lindex $argv [expr $arg_num + 1]]] == 1 } {
+		send_user "Missing required paramter for switch name.\r\n";
+		send_user "Check the help for \"[lindex $argv $arg_num]\".\r\n";
+		send_user "Please correct and try again.\r\n";
+		return -1;
+	}
+
+	set skip 1;
+
+	# Grab the device name from the command line
+	if { [regexp {([^0-9A-Za-z_])} [lindex $argv [expr $arg_num + 1]] line char] == 1 } {
+		send_user "Error: Sepecified name has an invalid character.\r\n";
+		send_user "Name: \"[lindex $argv [expr $arg_num + 1]]\";\r\n";
+		send_user "First Invalid Character: \"$char\"\r\n";
+		send_user "Please correct the name and try again.\r\n";
+		return -1;
+	}
+
+	# Confirm parameters
+	if { $verbose == 1 } {
+		send_user "skip = $skip; name = \"[lindex $argv [expr $arg_num + 1]]\";\r\n";
+	}
+
+	# Set the device name
+	set deviceName [lindex $argv [expr $arg_num + 1]];
+
+	return $skip;
+}
+
+
+#
+# getTftpServerInformation
+#	Parses the TFTP server IP address from the command line parameters.
+#
+proc getTftpServerInformation { arg_num argc argv } {
+
+	global tftpServerIP;
+	global verbose;
+
+	set skip 0;
+
+	# Check for required parameters
+	if { [expr $arg_num + 1] >= $argc || [string match "-*" [lindex $argv [expr $arg_num + 1]]] == 1 } {
+		send_user "Missing required parameter for TFTP server option.\r\n";
+		send_user "See the help for \"[lindex $argv $arg_num]\".\r\n";
+		send_user "Please correct and try again.\r\n";
+		return -1;
+	}
+
+	set skip 1;
+
+	# Grab the server IP address
+	set result [ regexp {^((?:[0-9]{1,3}[\.]){3}[0-9]{1,3})$} [lindex $argv [expr $arg_num + 1]] line ip ];
+	if { $result != 1 } {
+		send_user "Invalid TFTP server IP supplied: [lindex $argv [expr $arg_num + 1]]\r\n";
+		send_user "Please correct the IP and try again.\r\n";
+		return -1;
+	}
+
+	# Set the server IP
+	set tftpServerIP $ip;
+
+	# Confirm parameters
+	if { $verbose == 1 } {
+		send_user "skip = $skip; tftpServerIP = $tftpServerIP;\r\n";
+	}
+
+	return $skip;
+}
+
+
+#
+# getNfsServerInformation
+#	Parses the NFS server information, including IP address and exported
+#	NFS share, from the command line.  The IP and share must both be provided.
+#	The IP is check for a valid formatted address but nothing is done with
+#	the NFS share path.
+#
+proc getNfsServerInformation { arg_num argc argv } {
+
+	global nfsServerIP;
+	global nfsRemoteMountDir;
+	global verbose;
+
+	set skip 0;
+
+	# Check for required parameters to be supplied
+	if { [expr $arg_num + 1] >= $argc || [string match "-*" [lindex $argv [expr $arg_num + 1]]] == 1 } {
+		send_user "Missing required parameter for NFS server option.\r\n";
+		send_user "See the help for \"[lindex $argv $arg_num]\".\r\n";
+		send_user "Please correct and try again.\r\n";
+		return -1;
+	}
+
+	set skip 1;
+
+	# Grab the IP address followed by the mount point
+	set result [ regexp {^((?:[0-9]{1,3}[\.]){3}[0-9]{1,3})(?::([/a-zA-Z0-9_\.\-]+))?$} [lindex $argv [expr $arg_num + 1]] line ip mount ];
+	if { $result != 1 } {
+		send_user "Invalid NFS server IP supplied: [lindex $argv [expr $arg_num + 1]]\r\n";
+		send_user "Please correct the IP and try again.\r\n";
+		return 1;
+	}
+
+	# If the mount point was supplied, set it.  Otherwise use default.
+	if { $mount != "" } {
+		# Get information
+		set nfsRemoteMountDir $mount;
+	}
+
+	# Set the NFS server IP
+	set nfsServerIP $ip;
+
+	# Confirm parameters
+	if { $verbose == 1 } {
+		send_user "skip = $skip; tftpServerIP = $nfsServerIP; mount = \"$mount\";\r\n";
+	}
+
+	return $skip;
+}
+
+
+#
+# getBuildInformation
+#	Parse the build directory information from the command line paramters.
+#	Not too much in the way of checking is done here since a valid
+#	path depends more on the NFS mount.
+#
+proc getBuildInformation { arg_num argc argv } {
+
+	global bldDir;
+	global verbose;
+
+	set skip 0;
+
+	send_user "argc = $argc; arg_num = $arg_num;\r\n";
+
+	if { [expr $arg_num + 1] >= $argc || [string match "-*" [lindex $argv [expr $arg_num + 1]]] == 1 } {
+		send_user "Missing required parameter for Build option.\r\n";
+		send_user "See the help for \"[lindex $argv $arg_num]\".\r\n";
+		return -1;
+	}
+
+	set build [lindex $argv [expr $arg_num + 1]];
+	set skip 1;
+
+	set bldDir $build;
+
+	if { $verbose == 1 } {
+		send_user "skip = $skip; build = $build;\r\n";
+	}
+
+	return $skip;
+}
+
+
+#
+# getReleaseInfromation
+#
+#
+#
+#  Parameter should be of the form:
+#	v6.3.0:bld10
+#	v6.3.0:1
+#	v6.1.1:15
+#
+proc getReleaseInformation { arg_num argc argv } {
+
+	global verbose;
+	global bldDir;
+
+	set skip 0;
+
+	if { [expr $arg_num + 1] >= $argc || [string match "-*" [lindex $argv [expr $arg_num + 1]]] == 1 } {
+		send_user "Missing required parameter for Release option.\r\n";
+		send_user "See the help for \"[lindex $argv $arg_num]\".\r\n";
+		return -1;
+	}
+
+	set rel [lindex $argv [expr $arg_num + 1]];
+	set skip 1;
+
+	set result [ regexp {(^v[0-9]\.[0-9]\.[0-9]):(?:bld)?([0-9]{1,2})} $rel line version bldNum ];
+	if { $result != 1 } {
+		send_user "See the help for \"[lindex $argv $arg_num]\".\r\n";
+		send_user "\tInput valid: $rel\r\n";
+		send_user "Please correct and try again.\r\n";
+		return -1;
+	}
+
+	if { [ regexp {^([0-9])$} $bldNum ] == 1 } {
+		set bldNum "0$bldNum";
+	}
+
+	set bldDir "SQA/fos/$version/${version}_main_bld${bldNum}";
+
+	if { $verbose == 1 } {
+		send_user "rel = $rel; version = $version; bldNum = $bldNum;\r\n";
+	}
+
+	return $skip;
+}
+
+
+#
+# processCmdLineOptions
+#	This procedure is meant to read the data specified on the command to
+#	be used for running the swtich recovery script.  This is the option used
+#	when all required arguments are provided via the command line instead of
+#	coming from the database.  Each parameter needs to be checked as being
+#	valid.
+#
+# Inputs:
+#	argc = The number of commange line arguments
+#	argv = List of the command line arguments
+#
+# Returns:
+#	A list with either a -1 or all the values needed
+#	-1 = Failed, one of the supplied values is invalid
+#	 [<switch ip>, <switch subnet>, <avocent ip>, <avocent port>, <avocent username>, \
+#		<avocent password>, <net install image>, <boot environemnt id>, <switch name>]
+#
+proc processCmdLineOptions { argc argv } {
+
+	if { $argc != 7 } {
+		send_user "Not enough parameters supplied\r\n";
+		return [list -1];
+	}
+
+	if { [ipAddrValidCheck [lindex $argv 0]] != 1 } {
+		send_user --exact "The switch IP address is not valid: [lindex $argv 0]\r\n";
+		return [list -1];
+	}
+
+	if { [ipAddrValidCheck [lindex $argv 1]] != 1 } {
+		send_user --exact "The Switch Subnet mask is not valid: [lindex $argv 1]\r\n";
+		return [list -1];
+	}
+
+	if { [ipAddrValidCheck [lindex $argv 2]] != 1 } {
+		send_user --exact "The Avocent IP address is not valid: [lindex $argv 2]\r\n";
+		return [list -1];
+	}
+
+	if { [regexp "\[^0-9\]" [lindex $argv 3]] == 1 } {
+		send_user --exact "The Avocent Port is invalid: [lindex $argv 3]\r\n";
+		return [list -1];
+	}
+
+	set result [getTypeInformation [lindex $argv 6]];
+	if { [llength $result] == 0 } {
+		send_user "No device type found matching the specified: [lindex $argv 5]\r\n";
+		return [list -1];
+	} elseif { [llength $result] == 1 } {
+		send_user "Incomplete record found for that device.  This script is not setup for that device yet.\r\n";
+		return [list -1];
+	} elseif { [llength $result] != 2 } {
+		send_user "An unknown problem occured looking up information for the specified device\r\n"
+		return [list -1];
+	}
+
+	set name "sw_[lindex $argv 6]_[lindex [split [lindex $argv 0] \".\"] 3]";
+
+	return [concat [lrange $argv 0 5] $result $name];
+}
+
+
+#
+# readConfigFile
+#	This routine is responsible for two things, writing a configuration file
+#	if one does not currently exist in the active user's home directory and
+#	populate it with the default script values.  If the file does exist though,
+#	the values for the variables will be read from the file and used instead
+#	of the detfaults.
+#
+# Parameters
+#	cmd : "" [blank]  = Perform default action
+#		  "writeOnly" = Write the default values to the config file (overwrites current)
+#
+# Return:
+#	-1 = Error occurred
+#	 0 = Succesful
+#
+proc readConfigFile { } {
+
+	# Get all the global configuration values
+	global configFileName;
+	global tftpServerIP;
+	global nfsServerIP;
+	global nfsRemoteMountDir;
+	global bldDir;
+	global nfsLocalMountDir;
+	global mountOptions;
+	global manualBuildSelect
+
+	# Get Current Logged in User
+	set userName [exec printenv USER];
+
+	if { [string length $userName] <= 2 } {
+		# Bad username (most likely)
+		return -1;
+	}
+
+	if { [file exists "~$userName/$configFileName"] == 1 } {
+		send_user "Configuration file exists, reading it for values\r\n";
+
+		# Read values from file
+		set configFile [open "~$userName/$configFileName" "r"];
+
+		# Read in a line of the file and keep going until the end
+		while { [gets $configFile line] != -1 } {
+
+			# Check if the line has a "#" in it -> comment not to be processed
+			if { [string first "#" $line] == -1 } { 
+				# Check the line for a [varname]=[value] pattern
+				if { [ regexp "(.+)=(.*)" $line line var value ] == 1 } {
+
+					if { [string compare "useDefaults" $var] == 0 && [regexp "\[yY\]|(\[Yy\]es)" $value value] == 1 } {
+						send_user "Using the default script values\r\n"
+						break;
+					} elseif { [string compare "bldDir" $var] == 0 && [string compare "LATEST" $value] == 0 } {
+						send_user "Using the latest available build: $bldDir\r\n";
+					} elseif { $value == "" } {
+						send_user "Empty value for \"$var\" option.  Using default instead.\r\n";
+					} else {
+						# Set the variable global and then set the value
+						global $var
+						set $var $value
+					}
+				}
+			}
+		}
+	} else {
+		send_user "No configuration file found.  Using script default values.\r\n";
+	}
+
+	return 0;
+}
+
+#
+# calculateGateway
+#	This routine will take an IP address and the corresponding subnet mask 
+#	and will calculate what the Gateway IP should be.
+#
+# Parameters:
+#	ipAddr = An example IP address in the range
+#	netmask = The Subenet mask fo the range
+#
+# Returns:
+#	[blank] = Error (not enough parts in IP or Subnet)
+#	[gateway] = A string with the gateway IP
+#
+proc calculateGateway { ipAddr netmask } {
+
+	# Split the parts of the IP Address and Netmask
+	set maskParts [split $netmask "."];
+	set ipParts [split $ipAddr "."];
+
+	# Double check to make sure each has enough parts
+	if { [llength $maskParts] != 4 || [llength $ipParts] != 4 } {
+		send_user "Bad netmask IP\r\n"
+		return ""
+	}
+
+	# And the first octets of the two and create a new list
+	set gw [list [expr [lindex $ipParts 0] & [lindex $maskParts 0]]];
+
+	# And the second two octets and append to the list
+	lappend gw [expr [lindex $ipParts 1] & [lindex $maskParts 1]];
+
+	# And the third two octets and append to the list
+	lappend gw [expr [lindex $ipParts 2] & [lindex $maskParts 2]];
+
+	# And the fourth two octets, add 1, and then append to the end of the list
+	lappend gw [expr [expr [lindex $ipParts 3] & [lindex $maskParts 3]] + 1];
+
+	# Join the list parts together to get a valid IP address
+	set gw [join $gw "."];
+
+	return $gw;
+}
+
+#############################  Main Script Section  ##################################
+
+# Load outside/common routines
+source /home/pe413109/bin/expect/common.exp
+
+# Read a custom configuration file
+readConfigFile
+
+# Get Command line options
+set result [processCmdLine];
+
+if { $result != 1 } {
+
+	if { $result == 0 } {
+		send_user -- "Configuration file writen to home directory\r\n";
+		exit 0;
+	}
+
+	send_user "An error has occurred while trying to process the command line.\r\n";
+	send_user "Please correct the error and try again.\r\n";
+	send_user "If needed, see the help guide: ($argv0 --help)\r\n";
+	exit -1;
+}
+
+# TODO:
+#	Process returned information list
+
+global spawn_id;
+global global_timeout;
+
+set global_promtTimeout 5;
+
+if { [llength $deviceRecord] == 9 } {
+	# Supporting the old command line format still
+
+	set ipaddr [lindex $deviceRecord 0];
+	set subnetMask [lindex $deviceRecord 1];
+	set consoleIP [lindex $deviceRecord 2];
+	set consolePort [lindex $deviceRecord 3];
+	set portUserName [lindex $deviceRecord 4];
+	set portLoginPass [lindex $deviceRecord 5];
+	set imageFile [lindex $deviceRecord 6];
+	set bootType [lindex $deviceRecord 7];
+	set deviceName [lindex $deviceRecord 8];
+	set gateway [calculateGateway $ipaddr $subnetMask];
+
+} else {
+	# New Command line Processing Support
+
+	if { $deviceName == "" } {
+		set deviceName "sw_${deviceType}_[lindex [split $ipaddr \".\"] 3]";
+	}
+}
+
+
+# Display all script values for the User
+send_user "Settings Summary: \r\n";
+send_user "\tIP Address: $ipaddr \r\n";
+send_user "\tSubnet Mask: $subnetMask \r\n";
+send_user "\tGateway IP: $gateway \r\n";
+send_user "\tConsole Device: $consoleIP \r\n";
+send_user "\tConsole Port: $consolePort (username/password: $portUserName/$portLoginPass) \r\n";
+send_user "\tImage File: $imageFile \r\n";
+send_user "\tBoot Environment: $bootType \r\n";
+send_user "\tDevice Name: $deviceName \r\n";
+send_user "\tTFTP Host IP: $tftpServerIP \r\n";
+send_user "\tMount Host IP: $nfsServerIP \r\n";
+send_user "\tMount Source Path: $nfsRemoteMountDir \r\n";
+send_user "\tBuild Directory: $bldDir \r\n";
+send_user "\tMount Dest Location: $nfsLocalMountDir \r\n";
+send_user "\tMount Options: $mountOptions \r\n";
+send_user "\tManual Build Select: $manualBuildSelect \r\n";
+send_user "\r\n";
+send_user "\r\n";
+send_user "Please review the above settings to verify correct values.\r\n";
+send_user "Use the above values (y/Y/n/N): "
+
+# Verify we have all needed parameters
+if { $ipaddr == "" || $subnetMask == "" || $gateway == "" || $consoleIP == "" \
+	|| $consolePort == "" || $portUserName == "" || $portLoginPass == "" \
+	|| $imageFile == "" || $bootType == "" || $deviceName == "" \
+	|| $tftpServerIP == "" || $nfsServerIP == "" || $nfsRemoteMountDir == "" \
+	|| $nfsLocalMountDir == "" } {
+	
+	send_user "\r\n\r\nERROR: Missing parameter.  Please be sure to proivde necessary information.\r\n";
+	send_user "Any missing fields above (with exception of Build Directory) should have\r\n";
+	send_user "a correct and valid value.\r\n";
+
+	exit -1;
+}
+
+
+# Check if we are in Fake Mode and should skip everything
+if { $fake_mode == 1 } {
+	send_user "\r\nFake Mode Enabled.  Stopping here.\r\n";
+	exit 0;
+}
+
+
+# Get user acknowledgement before continuing
+expect_user {
+	-re \[Yy\]|(\[Yy\]es) {
+		send_user "Continuing with Swtich Recovery\r\n";
+	}
+	-re \[Nn\]|(\[Nn\]o) {
+		send_user "Cancelling Switch Recovery\r\n";
+		exit 0;
+	}
+	timeout {
+		exp_continue;
+	}
+}
+
+##  Connect to the device
+set timeout 60;
+avocentLogin $consoleIP $consolePort $portUserName $portLoginPass
+
+# Attempt to login to the switch
+set result [switchLogin "root" "fibranne"];
+
+# Reboot the switch
+set atBootPrompt 0;
+if { $result == -1 } {
+	# Could be in middle of boot
+	send_user "The switch could not be logged into and needs to be power cycled\r\n";
+} else {
+	# Could be at boot prompt or bash prompt
+	send -- "\r";
+	expect {
+		-re {([A-Za-z0-9 ][$%>#])( )} {
+			# Linux Prompt
+			sleep 3;
+			cmd "/sbin/reboot" 1
+		}
+		-re {((>)|(=>))( )} {
+			# At boot menu
+			send_user "Already in the boot Environment\r\n";
+			set atBootPrompt 1
+		}
+	}
+}
+
+if { $atBootPrompt != 1 } {
+	# Look for the boot menu prompt
+	switch -- $bootType {
+		1 {
+			send_user "U-Boot Type 1\r\n"
+
+			set timeout 120;
+			expect {
+				-exact "Press escape within 4 seconds to enter boot interface" {
+					send "\033";
+					exp_continue;
+				}
+				-exact "Option?" {
+					send "3\r";
+				}
+				timeout {
+					send_user "Timed out trying to get into boot environment. Turing control to user.\r\n"
+					interact
+					exit 0;
+				}
+			}
+		}
+
+		2 -
+		3 -
+		4 -
+		5 -
+		6 -
+		7 -
+		9 -
+		10 -
+		11 -
+		12 -
+		13 -
+		14 {
+			send_user "U-Boot Type 2 ($bootType)\r\n"
+
+			set timeout 120
+			expect {
+				-exact "Hit ESC to stop autoboot:" {
+					send "\033";
+					exp_continue;
+				}
+				-exact "Option?" {
+					send "3\r";
+				}
+				timeout {
+					send_user "Timed out trying to get into boot environment. Turing control to user.\r\n"
+					interact
+					exit 0;
+				}
+			}
+		}
+
+		8 {
+			send_user "U-Boot Type 2 ($bootType)\r\n"
+
+			set timeout 120
+			expect {
+				-exact "Hit any key to stop autoboot:" {
+					send "\033";
+					exp_continue;
+				}
+				-exact "Hit ESC to stop autoboot:" {
+					send "\033";
+					exp_continue;
+				}
+				-exact "Option?" {
+					send "3\r";
+				}
+				timeout {
+					send_user "Timed out trying to get into boot environment. Turing control to user.\r\n"
+					interact
+					exit 0;
+				}
+			}
+		}
+	}
+}
+
+# Set the Boot variables, load image, and start boot
+switch -- $bootType {
+	1 {
+		send_user "Boot type 1 for boot setup.\r\n";
+		sleep 0.25;
+		cmd " ";
+		cmd " ";
+		cmd "setenv ENET_Src=$ipaddr";
+		cmd "setenv ENET_Dst=$tftpServerIP";
+		cmd "setenv ENET_Mask=$subnetMask";
+		cmd "setenv ENET_Gw=$gateway";
+		cmd " ";
+		cmd "saveenv "
+
+		sleep 1
+
+		cmd "printenv "
+		
+		cmd " ";
+		send -- "reset \r"
+
+		set timeout 120;
+		expect {
+			-exact "Press escape within 4 seconds to enter boot interface" {
+				send "\033";
+				exp_continue;
+			}
+			-exact "Option?" {
+				send "3\r";
+			}
+			timeout {
+				send_user "Timed out trying to get into boot environment. Turing control to user.\r\n"
+				interact
+				exit 0;
+			}
+		}
+
+		sleep 0.5
+
+		send "ping\r\n"
+
+		set timeout 20
+		expect {
+			"64 bytes from $tftpServerIP" {
+				send_user "ping matched\r\n";
+				send -- " ";
+				cmd " ";
+				sleep 0.5
+				send -- "boot ENET()tftp://$tftpServerIP/$imageFile ip=off\r"
+			}
+			timeout {
+				send_user "Could not ping the TFTP host. Please correct and hit\"+++\" to return.\r\n";
+			}
+		}
+
+		set timeout 300;
+	}
+
+	2 {
+		set timeout_old $timeout;
+		set timeout 10;
+		sleep 0.25;
+		cmd " ";
+		cmd " ";
+		cmd "printenv";
+		cmd "setenv ipaddr \"$ipaddr\"";
+		cmd "setenv netmask \"$subnetMask\"";
+		cmd "setenv gatewayip \"$gateway\"";
+		cmd "setenv serverip \"$tftpServerIP\"";
+		cmd "setenv bootargs \"ip=off\"";
+		cmd "setenv ethact \"ENET0\"";
+		cmd "saveenv";
+		cmd " "
+
+		cmd "ping \$serverip"
+		
+		set timeout 60
+		cmd "tftpboot 0x1000000 $imageFile ";
+		set timeout 10
+		cmd "bootm 0x1000000 ";
+		set timeout $timeout_old
+	}
+
+	3 {
+		set timeout_old $timeout;
+		set timeout 10;
+		sleep 0.25;
+		cmd " ";
+		cmd " ";
+		cmd "printenv";
+		cmd "setenv ipaddr \"$ipaddr\"";
+		cmd "setenv netmask \"$subnetMask\"";
+		cmd "setenv gatewayip \"$gateway\"";
+		cmd "setenv serverip \"$tftpServerIP\"";
+		cmd "setenv bootargs \"ip=off\"";
+		cmd "setenv ethact \"ENET0\"";
+		cmd "saveenv";
+		cmd " "
+
+		cmd "ping \$serverip"
+		
+		set timeout 60
+		cmd "makesinrec 0x1000000 ";
+		cmd "tftpboot 0x4000000 $imageFile ";
+		set timeout 10
+		cmd "bootm 0x4000000 ";
+		set timeout $timeout_old
+	}
+
+	4 {
+		set timeout_old $timeout;
+		set timeout 10;
+		sleep 0.25;
+		cmd " ";
+		cmd " ";
+		cmd "printenv";
+		cmd "setenv ipaddr \"$ipaddr\"";
+		cmd "setenv netmask \"$subnetMask\"";
+		cmd "setenv gatewayip \"$gateway\"";
+		cmd "setenv serverip \"$tftpServerIP\"";
+		cmd "setenv ethprime FM2@DTSEC3";
+		cmd "setenv ethact FM2@DTSEC3";
+		cmd "saveenv";
+		cmd " "
+		cmd "makesinrec 1000000 "
+		cmd "tftp 2000000 MM34/uImage.smp "
+		cmd "tftp 3000000 MM34/ramdisk.mercury.Aug "
+		cmd "tftp 4000000 MM34/silkworm_bd1000.dtb "
+		cmd "bootm 2000000 3000000 4000000 "
+	}
+
+	5 {
+		# Castor & Rigel (04/13/2015)
+		# makesinrec 0x1000000;tftpboot 2000000 castorXX/uImage;tftpboot 4000000 castorXX/silkworm_bd131.dtb;tftpboot 3000000 castorXX/ramdisk.image;bootm 2000000 3000000 4000000
+
+		set timeout_old $timeout;
+		set timeout 10;
+		sleep 0.25;
+		cmd " ";
+		cmd " ";
+		cmd "printenv";
+		cmd "setenv ipaddr \"$ipaddr\"";
+		cmd "setenv netmask \"$subnetMask\"";
+		cmd "setenv gatewayip \"$gateway\"";
+		cmd "setenv serverip \"$tftpServerIP\"";
+		cmd "setenv ethprime FM2@DTSEC3";
+		cmd "setenv ethact FM2@DTSEC3";
+		cmd "saveenv";
+		cmd " "
+		cmd "makesinrec 1000000 "
+		cmd "tftp 2000000 castorXX/uImage "
+		cmd "tftp 3000000 castorXX/ramdisk.image "
+		cmd "tftp 4000000 castorXX/silkworm_bd131.dtb "
+		cmd "bootm 2000000 3000000 4000000 "
+	}
+
+	6 {
+		# Skybolt:
+		# makesinrec 0x1000000; tftpboot 2000000 skybolt/uImage; tftpboot 3000000 skybolt/ramdisk.skybolt;tftpboot 4000000 skybolt/silkworm.dtb;bootm 2000000 3000000 4000000
+
+		set timeout_old $timeout;
+		set timeout 10;
+		sleep 0.25;
+		cmd " ";
+		cmd " ";
+		cmd "printenv";
+		cmd "setenv ipaddr \"$ipaddr\"";
+		cmd "setenv netmask \"$subnetMask\"";
+		cmd "setenv gatewayip \"$gateway\"";
+		cmd "setenv serverip \"$tftpServerIP\"";
+		cmd "setenv ethprime FM2@DTSEC4";
+		cmd "setenv ethact FM2@DTSEC4";
+		cmd "saveenv";
+		cmd " "
+		cmd "makesinrec 0x1000000 "
+		cmd "tftpboot 2000000 skybolt/uImage "
+		cmd "tftpboot 3000000 skybolt/ramdisk.skybolt "
+		cmd "tftpboot 4000000 skybolt/silkworm.dtb "
+		cmd "bootm 2000000 3000000 4000000 "
+	}
+
+	7 {
+		# Yoda:
+		# makesinrec 0x1000000;
+		# tftpboot 2000000 yoda/uImage.yoda;
+		# tftpboot 3000000 yoda/ramdisk.yoda;
+		# tftpboot 4000000 yoda/silkworm_yoda.dtb;
+		# bootm 2000000 3000000 4000000
+
+		set timeout_old $timeout;
+		set timeout 10;
+		sleep 0.25;
+		cmd " ";
+		cmd " ";
+		cmd "printenv";
+		cmd "setenv ipaddr \"$ipaddr\"";
+		cmd "setenv netmask \"$subnetMask\"";
+		cmd "setenv gatewayip \"$gateway\"";
+		cmd "setenv serverip \"$tftpServerIP\"";
+		cmd "setenv ethprime FM2@DTSEC3";
+		cmd "setenv ethact FM2@DTSEC3";
+		cmd "saveenv";
+		cmd " "
+		cmd "makesinrec 0x1000000 "
+		cmd "tftpboot 2000000 yoda/uImage.yoda "
+		cmd "tftpboot 3000000 yoda/ramdisk.yoda "
+		cmd "tftpboot 4000000 yoda/silkworm_yoda.dtb "
+		cmd "bootm 2000000 3000000 4000000 "
+	}
+
+	8 {
+		# Wedge: (03/04/2015)
+		# makesinrec 0x1000000;
+		# tftpboot 2000000 wedge/uImage.netinstall;
+		# tftpboot 3000000 wedge/ramdisk_v1.0.img;
+		# tftpboot c00000 wedge/silkworm.dtb.netinstall;
+		# bootm 0x2000000 0x3000000 0xc00000
+
+		set timeout_old $timeout;
+		set timeout 10;
+		sleep 0.25;
+		cmd " ";
+		cmd " ";
+		cmd "printenv";
+		cmd "setenv ipaddr \"$ipaddr\"";
+		cmd "setenv netmask \"$subnetMask\"";
+		cmd "setenv gatewayip \"$gateway\"";
+		cmd "setenv serverip \"$tftpServerIP\"";
+		# cmd "setenv ethprime FM2@DTSEC3";
+		# cmd "setenv ethact FM2@DTSEC3";
+		cmd "saveenv";
+		cmd " "
+		cmd "makesinrec 0x1000000 "
+		cmd "tftpboot 2000000 wedge/uImage.netinstall "
+		cmd "tftpboot 3000000 wedge/ramdisk_v1.0.img "
+		cmd "tftpboot c00000 wedge/silkworm.dtb.netinstall "
+		cmd "bootm 0x2000000 0x3000000 0xc00000 "
+	}
+
+	9 {
+		# Castor & Rigel (04/13/2015)
+		# makesinrec 0x1000000;tftpboot 2000000 castorXX/uImage;tftpboot 4000000 castorXX/silkworm_bd131.dtb;tftpboot 3000000 castorXX/ramdisk.image;bootm 2000000 3000000 4000000
+
+		set timeout_old $timeout;
+		set timeout 10;
+		sleep 0.25;
+		cmd " ";
+		cmd " ";
+		cmd "printenv";
+		cmd "setenv ipaddr \"$ipaddr\"";
+		cmd "setenv netmask \"$subnetMask\"";
+		cmd "setenv gatewayip \"$gateway\"";
+		cmd "setenv serverip \"$tftpServerIP\"";
+		cmd "setenv ethprime FM2@DTSEC3";
+		cmd "setenv ethact FM2@DTSEC3";
+		cmd "saveenv";
+		cmd " "
+		cmd "makesinrec 1000000 "
+		cmd "tftp 2000000 castorXX/uImage "
+		cmd "tftp 3000000 castorXX/ramdisk.image "
+		cmd "tftp 4000000 castorXX/silkworm_bd131.dtb "
+		cmd "bootm 2000000 3000000 4000000 "
+	}
+
+	10 {
+		# Lando CP (Allegiance, Venator)
+		# makesinrec 0x1000000;tftpboot 2000000 lando/uImage.netinstall;tftpboot 3000000 lando/ramdisk_v1.0.img;tftpboot c00000 lando/silkworm.dtb.netinstall;
+		# makesinrec 0x1000000;tftpboot 2000000 lando/uImage.7.10;tftpboot 3000000 lando/ramdisk_v1.0.img;tftpboot c00000 lando/silkworm.dtb.netinstall;		# New line
+
+		set timeout_old $timeout;
+		set timeout 10;
+		sleep 0.25;
+		cmd " ";
+		cmd " ";
+		cmd "printenv";
+		cmd "setenv ipaddr \"$ipaddr\"";
+		cmd "setenv netmask \"$subnetMask\"";
+		cmd "setenv gatewayip \"$gateway\"";
+		cmd "setenv serverip \"$tftpServerIP\"";
+		cmd "setenv ethprime FM2@DTSEC3";
+		cmd "setenv ethact FM2@DTSEC3";
+		cmd "saveenv";
+		cmd " "
+		cmd "makesinrec 1000000 "
+		cmd "tftp 2000000 lando/uImage.7.10 "
+		cmd "tftp 3000000 lando/ramdisk_v1.0.img "
+		cmd "tftp 4000000 lando/silkworm.dtb.netinstall "
+		cmd "bootm 2000000 3000000 4000000 "
+	}
+
+	11 {
+		# Chewbacca
+		# makesinrec 0x1000000; tftpboot 2000000 chewbacca/uImage; tftpboot 3000000 chewbacca/ramdisk_v1.0.img; tftpboot c00000 chewbacca/silkworm.dtb; bootm 0x2000000 0x3000000 0xc00000;
+
+		set timeout_old $timeout;
+		set timeout 10;
+		sleep 0.25;
+		cmd " ";
+		cmd " ";
+		cmd "printenv";
+		cmd "setenv ipaddr \"$ipaddr\"";
+		cmd "setenv netmask \"$subnetMask\"";
+		cmd "setenv gatewayip \"$gateway\"";
+		cmd "setenv serverip \"$tftpServerIP\"";
+		# cmd "setenv ethprime FM2@DTSEC3";
+		cmd "setenv ethact FM1@DTSEC2 ";
+		cmd "saveenv";
+		cmd " "
+		cmd "makesinrec 0x1000000 "
+		cmd "tftpboot 2000000 chewbacca/uImage "
+		cmd "tftpboot 3000000 chewbacca/ramdisk_v1.0.img "
+		cmd "tftpboot c00000 chewbacca/silkworm.dtb "
+		cmd "bootm 0x2000000 0x3000000 0xc00000 "
+	}
+
+	12 {
+		# Rigel-MOR
+		# makesinrec 0x1000000; tftpboot 2000000 rigelMor/uImage.new; tftpboot 4000000 rigelMor/silkworm_bd154.dtb; tftpboot 3000000 rigelMor/ramdisk.mercury.Aug; bootm 2000000 3000000 4000000
+
+		set timeout_old $timeout;
+		set timeout 10;
+		sleep 0.25;
+		cmd " ";
+		cmd " ";
+		cmd "printenv";
+		cmd "setenv ipaddr \"$ipaddr\"";
+		cmd "setenv netmask \"$subnetMask\"";
+		cmd "setenv gatewayip \"$gateway\"";
+		cmd "setenv serverip \"$tftpServerIP\"";
+		# cmd "setenv ethprime FM2@DTSEC3";
+		cmd "setenv ethact FM1@DTSEC2 ";
+		cmd "saveenv";
+		cmd " "
+		cmd "makesinrec 0x1000000 "
+		cmd "tftpboot 2000000 rigelMor/uImage.new "
+		cmd "tftpboot 4000000 rigelMor/silkworm_bd154.dtb "
+		cmd "tftpboot 3000000 rigelMor/ramdisk.mercury.Aug "
+		cmd "bootm 2000000 3000000 4000000 "
+	}
+
+	13 {
+		# Tyr
+		# makesinrec 0x1000000;tftpboot 0x2000000 tyr/uImage;tftpboot 0x3000000 tyr/ramdisk_v1.2.img;tftpboot 0x00c00000 tyr/silkworm_bd173.dtb;bootm 0x2000000 0x3000000 0x00c00000
+
+		set timeout_old $timeout;
+		set timeout 10;
+		sleep 0.25;
+		cmd " ";
+		cmd " ";
+		cmd "printenv";
+		cmd "setenv ipaddr \"$ipaddr\"";
+		cmd "setenv netmask \"$subnetMask\"";
+		cmd "setenv gatewayip \"$gateway\"";
+		cmd "setenv serverip \"$tftpServerIP\"";
+		# cmd "setenv ethprime FM2@DTSEC3";
+		cmd "setenv ethact FM1@DTSEC2 ";
+		cmd "saveenv";
+		cmd " "
+		cmd "makesinrec 0x1000000 "
+		cmd "tftpboot 0x2000000 tyr/uImage "
+		cmd "tftpboot 0x3000000 tyr/ramdisk_v1.2.img "
+		cmd "tftpboot 0x00c00000 tyr/silkworm_bd173.dtb "
+		cmd "bootm 0x2000000 0x3000000 0x00c00000 "
+	}
+
+	14 {
+		# AMP (BD=171):
+		# makesinrec 0x1000000; tftpboot 0x2000000 AMP/uImage; => tftpboot 0x3000000 AMP/ramdisk.amp; tftpboot 0x4000000 AMP/silkworm.dtb; bootm 0x2000000 0x3000000 0x4000000
+
+		set timeout_old $timeout;
+		set timeout 10;
+		sleep 0.25;
+		cmd " ";
+		cmd " ";
+		cmd "printenv";
+		cmd "setenv ipaddr \"$ipaddr\"";
+		cmd "setenv netmask \"$subnetMask\"";
+		cmd "setenv gatewayip \"$gateway\"";
+		cmd "setenv serverip \"$tftpServerIP\"";
+		cmd "setenv ethprime FM2@DTSEC4";
+		cmd "setenv ethact FM2@DTSEC4";
+		cmd "saveenv";
+		cmd " "
+		cmd "makesinrec 0x1000000 "
+		cmd "tftpboot 0x2000000 AMP/uImage "
+		cmd "tftpboot 0x3000000 AMP/ramdisk.amp "
+		cmd "tftpboot 0x4000000 AMP/silkworm.dtb "
+		cmd "bootm 2000000 0x3000000 0x4000000 "
+	}
+
+}
+
+# Configure the Linux Environment, mount directory, switch to build directory
+switch -- $bootType {
+	1 -
+	2 -
+	3 {
+		cmd " "
+		cmd "stty sane"
+		cmd "sin"
+		cmd "ifconfig eth0 ip $ipaddr netmask $subnetMask up "
+		cmd "route add default gw $gateway "
+		sleep 5;
+		cmd "mkdir -p $nfsLocalMountDir "
+		cmd "mount -t nfs -o $mountOptions $nfsServerIP:$nfsRemoteMountDir $nfsLocalMountDir ";
+	}
+
+	4 -
+	5 -
+	6 -
+	7 -
+	8 -
+	9 -
+	10 -
+	11 -
+	12 -
+	13 -
+	14 {
+		cmd " "
+		cmd "stty sane"
+		cmd "sin"
+		cmd "ifconfig eth0 $ipaddr netmask $subnetMask up "
+		cmd "route add default gw $gateway "
+		sleep 5;
+		cmd "mkdir -p $nfsLocalMountDir "
+		cmd "mount -t nfs -o $mountOptions $nfsServerIP:$nfsRemoteMountDir $nfsLocalMountDir ";
+	}
+}
+
+if { $manualBuildSelect == 0 } {
+	cmd "cd $nfsLocalMountDir/$bldDir "
+	cmd " ";
+
+} else {
+	send_user "Please navigate to the desired build directory.\r\n";
+	send_user "When there, type \"+++\" to return to the script.\r\n";
+
+	interact +++ return
+}
+
+
+# Start the install
+cmd "./install release "
+
+# Wait for Bash prompt to come back
+prompt 1800; #30 minutes
+
+# Finish firmware install
+cmd " "
+cmd "cd / "
+cmd "umount load "
+cmd "sync "
+cmd "sync "
+cmd "sync "
+sleep 2
+
+# Reboot linux
+cmd "reboot -f"
+
+# Wait for switch to reboot
+set timeout 600
+expect {
+#	-nocase "login:" { ;}
+	-exact "Port initialization completed." { ; }
+	-exact "All service instances on Active" { ; }
+	-exact "All service instances in sync" { ; }
+}
+
+#Switch Login
+set result [switchLogin "root" "fibranne"];
+
+if { $result == 1 } {
+	cmd " " 120;
+	cmd "timeout 0 " 120;
+	#cmd "diagdisablepost " 120;
+	cmd "switchname \"$deviceName\" " 120;
+	#cmd "/sbin/reboot -f " 120;
+	cmd "exit " 2;
+}
+
+exit 0;
+

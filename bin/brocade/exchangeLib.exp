@@ -1,0 +1,278 @@
+#!/usr/bin/expect
+# File: exchangeLib.exp
+# Purpose: Automate process of sending a library to a switch and then
+#          exchanging it and rebooting.
+
+
+# ********************************************************* #
+# Sources
+# ********************************************************* #
+source [file join [file dirname [info script]] expectLib.exp]
+
+
+# ********************************************************* #
+# Globals
+# ********************************************************* #
+set rc 0
+set message "SUCCESS - LIB EXCHANGED"
+set stars "***********************************************************"
+
+set base_proj_dir $env(BASE_PROJ_DIR)
+set broot $base_proj_dir/build
+set preserve 1
+set reboot 1
+
+
+# ********************************************************* #
+# Process arguments 
+# ********************************************************* #
+
+# Expected args:
+#    * -s, --service: service (daemon)
+#	 * -b, --build: bd number
+#	 * -i, ---ip: ip address
+#	 * --no_preserve: preserve flag
+#	 * --no_reboot
+
+# Process passed args
+if { $argc > 0 } {
+	# Step through each arg (for loop)
+	for {set i 0} {$i < $argc} {incr i 1} {
+		set arg [lindex $argv $i];
+
+		# Switch based on flag
+		switch -regex -- "$arg" {
+
+			(^-s)|(^--service) {
+				# Check if service is composed of at least one lower case letter
+				set result [ regexp {^([a-z]+)|([a-z]+_[a-z]*)$} [lindex $argv [expr $i + 1]] service ];
+				if { $result != 1 } {
+					puts "\nInvalid service: [lindex $argv [expr $i + 1]]";
+					puts "Please use only letters";
+					exit -1;
+				}
+
+				# Increment counter to next flag
+				set i [expr $i + 1];
+			}
+
+			(^-b)|(^--build) {
+				# Check if build number is 2-3 digit number
+				set result [ regexp {^([0-9]{1,3})$} [lindex $argv [expr $i + 1]] -> bd ]
+				if { $result != 1 } {
+					puts "\nInvalid build number: [lindex $argv [expr $i + 1]]";
+					puts "Please input a number between 0-999";
+					exit -1;
+				}
+
+				# Increment counter to next flag
+				set i [expr $i + 1];
+			}
+
+			(^-i)|(^--ip) {
+				# Check if ip address is in correct format
+				set result [ regexp {^(([0-9]{1,3}[\.]){3}[0-9]{1,3})$} [lindex $argv [expr $i + 1]] -> ip ]
+				if { $result != 1 } {
+					puts "\nInvalid ip address: [lindex $argv [expr $i + 1]]";
+					puts "Please input a valid ip address format";
+					exit -1;
+				}
+
+				# Increment counter to next flag
+				set i [expr $i + 1];
+			}
+
+			(^--no_preserve) {
+				# Keep a copy of the previous daemon
+				set preserve 0
+			}
+
+			(^--no_reboot) {
+				# Do not reboot switch after daemon is loaded
+				set reboot 0
+			}
+
+			(^-h)|(^--help) {
+				puts "\nExpected args:";
+				puts "   * -s, --service: service (daemon)";
+				puts "   * -b, --build: bd number";
+				puts "   * -i, ---ip: ip address";
+				puts "   * --no_preserve: preserve flag (default true)";
+				puts "   * --no_reboot";
+				puts ""
+				exit 0;
+			}
+
+			default {
+				puts "\nUnknown parameter specified: $arg";
+				exit -1;
+			}
+		}
+	}
+} else {
+	puts "\nNo arguments specified. Use -h flag for help\n";
+	exit -1;
+}
+
+# Define lib based on provided service
+set lib lib${service}.so.1.0
+set lib_path $broot/swbd$bd/fabos/src/lib/$service
+
+# Print parameters
+puts "\n$stars\n\t\tExchange Library\n$stars\n"
+puts "service   : $service";
+puts "lib	: $lib";
+puts "bd        : $bd";
+puts "switch ip : $ip";
+
+
+# ********************************************************* #
+# Send lib to switch 
+# ********************************************************* #
+
+set result [pingIPAddress $ip]
+# Check for errors
+if { [lindex $result 0] < 0} {
+	set rc [lindex $result 0]
+	set message [lindex $result 1]
+}
+
+
+# ********************************************************* #
+# Copy Lib to IP Address 
+# ********************************************************* #
+
+if { $rc == 0 } {
+	printSection "Copy Lib to IP Address"
+
+	set pass fibranne
+
+	while 1 {
+		# scp daemon to switch
+		spawn scp $lib_path/$lib root@$ip:/tmp
+		expect {
+			# Unexpected: RSA key on switch changed
+			"WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!" {
+				set rc -2
+			}
+
+			# Unexpected: RSA key isn't in known_hosts file
+			"yes/no" {
+				send "yes\r"
+
+				# Fall through to next case
+				exp_continue
+			}
+
+			# Expected: Provide password to copy file to switch
+			"assword" {
+				send "$pass\r"
+			}	
+		}
+
+		# Check scp message 
+		if { $rc == 0 } {
+			expect {
+				# Expected: Uploaded successfully
+				"100%" {
+				}
+
+				# Unexpected: Can't find daemon
+				"No such file or directory" {
+					set rc -1
+					set message "FAILURE - Daemon doesn't exist (check input parameters, check view)"
+				}
+
+				# Unexpected: Password not default
+				"Permission denied" {
+					set rc -1
+					set message "FAILURE - Non-default password"
+				}
+			}
+		}
+		interact
+
+		# Check if need to remove key from known_hosts file
+		if { $rc == -2 } {
+			set rc [removeKnownHost $ip]
+			if {$rc == -1 } {
+				set message "FAILURE - Unknown RSA Key"
+				break
+			}
+		} else {
+			break
+		}
+	}
+}
+
+
+# ********************************************************* #
+# Exchange Lib 
+# ********************************************************* #
+
+if { $rc == 0 } {
+	printSection "Exchange Lib"
+
+	# SSH to IP address
+	spawn ssh root@$ip
+	expect {
+		# Password
+		"assword" {
+			send "$pass\r"
+		}
+		# Max sessions
+		"Max remote sessions" {
+			set rc -1
+			set message "FAILURE - Max remote sessions"
+			break
+		}
+	}
+	expect {
+		# Send <C-c>
+		"Use Control-C" {
+			send \003
+
+			# Fall through to next case
+			exp_continue
+
+		}
+
+		# Wait for promt
+		">" {
+			# Do nothing
+		}
+	}
+
+	# Disable superd
+	send "chkconfig superd off\r"
+	
+	# Make exchange
+	set exec_dir /fabos/lib
+	set time_stamp [clock format [clock seconds] -format {%Y-%m-%d.%H:%M:%S}]
+	set old_lib ${lib}.${time_stamp}
+	expect ">"
+	send "mv $exec_dir/$lib $exec_dir/$old_lib\r"
+	expect ">"
+	send "cp /tmp/$lib $exec_dir/\r"
+	if { $preserve == 0 } {
+		expect ">"
+		send "rm $exec_dir/$old_lib\r"
+	}
+
+	
+	# Reboot
+	expect ">"
+	if { $reboot } {
+		send "reboot -s\r"
+	} else {
+		send "exit\r"
+	}
+	interact
+}
+
+
+# ********************************************************* #
+# Display Status
+# ********************************************************* #
+
+displayResult $rc $message

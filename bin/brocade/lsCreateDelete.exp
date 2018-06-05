@@ -1,0 +1,466 @@
+#!/usr/bin/expect
+# File: lsCreateDelete.exp
+# Purpose: Create a logical switch, optionally add specified port(s), and
+#		   optionally delete.
+
+
+# ********************************************************* #
+# Globals
+# ********************************************************* #
+set rc 0
+set error "FAILURE"
+set stars "***********************************************************"
+
+set ls_create -1
+set port -1
+set script -1
+set ls_delete -1
+set ls_exist -1
+
+
+# ********************************************************* #
+# Process arguments 
+# ********************************************************* #
+
+# Expected args:
+#	 * -i, ---ip: Ip address
+#    * -c, --create: Create logical switch
+#	 * -p, --port: Add port(s)
+#	 * -s, --script: Script of additional commands 
+#	 * -d, ---delete: Delete logical switch
+
+# Process passed args
+if { $argc > 0 } {
+	# Step through each arg (for loop)
+	for {set i 0} {$i < $argc} {incr i 1} {
+		set arg [lindex $argv $i];
+
+		# Switch based on flag
+		switch -regex -- "$arg" {
+
+			(^-i)|(^--ip) {
+				# Check if ip address is in correct format
+				set result [ regexp {^(([0-9]{1,3}[\.]){3}[0-9]{1,3})$} [lindex $argv [expr $i + 1]] -> ip ]
+				if { $result != 1 } {
+					puts "\nInvalid ip address: [lindex $argv [expr $i + 1]]";
+					puts "Please input a valid ip address format";
+					exit -1;
+				}
+
+				# Increment counter to next flag
+				set i [expr $i + 1];
+			}
+
+			(^-c)|(^--create) {
+				# Check if logical switch specified to be created
+				set result [ regexp {^([0-9]{1,3})$} [lindex $argv [expr $i + 1]] ls_create ];
+				if { ($result != 1) || ($ls_create < 1) || ($ls_create > 127) } {
+					puts "\nInvalid logical switch to create: [lindex $argv [expr $i + 1]]";
+					puts "Please specify a number between 1 and 127";
+					exit -1;
+				}
+
+				# Increment counter to next flag
+				set i [expr $i + 1];
+			}
+
+			(^-p)|(^--port) {
+				# Check if port number is 1-3 digit number
+				set result [ regexp {^([0-9]{1,3})$} [lindex $argv [expr $i + 1]] -> port ]
+				if { $result != 1 } {
+					puts "\nInvalid port number: [lindex $argv [expr $i + 1]]";
+					puts "Please input a number between 0-999";
+					exit -1;
+				}
+
+				# Increment counter to next flag
+				set i [expr $i + 1];
+			}
+
+			(^-s)|(^--script) {
+				# Check if a valid bash script is specified
+				set result [ regexp {^\/{0,1}(.+\/)*(.*\.*.+)$} [lindex $argv [expr $i + 1]] -> -> script];
+				set script_path [lindex $argv [expr $i + 1]]
+				if { $result != 1 } {
+					puts "\nInvalid script: [lindex $argv [expr $i + 1]]";
+					puts "Please use only letters";
+					exit -1;
+				}
+
+				# Increment counter to next flag
+				set i [expr $i + 1];
+			}
+
+			(^-d)|(^--delete) {
+				# Delete logical switch
+				set ls_delete 1
+			}
+
+			(^-h)|(^--help) {
+				puts "\nExpected args:";
+				puts "   * -i, --ip: Ip address";
+				puts "   * -c, --create: Create logical switch";
+				puts "   * -p, --port: Add ports";
+				puts "   * -s, --script: Script of additional commands";
+				puts "   * -d, --delete: Delete logical switch";
+				exit 0;
+			}
+
+			default {
+				puts "\nUnknown parameter specified: $arg";
+				exit -1;
+			}
+		}
+	}
+} else {
+	puts "\nNo arguments specified. Use -h flag for help\n";
+	exit -1;
+}
+
+# Check all necessary parameters specified
+if { ($ip == -1) || (($ls_create == -1) && ($ls_delete == -1) } {
+	puts "\nMust specify ip address and either create or delete.";
+	puts "Use -h flag for help\n";
+	exit -1;
+}
+
+# Print parameters
+puts "\n$stars\n\t\tLogical Switch Create / Delete\n$stars\n"
+puts "switch ip : $ip";
+if { $ls_create != -1 } {
+	puts "create ls : $ls_create";
+}
+if { $port != -1 } {
+	puts "add port  : $port";
+}
+if { $script != -1 } {
+	puts "script  : $script";
+	puts "script_path  : $script_path";
+}
+if { $ls_delete != -1 } {
+	puts "delete ls : $ls_delete";
+}
+
+
+# ********************************************************* #
+# Ping IP address to see if switch is up/ exists 
+# ********************************************************* #
+
+puts "\n$stars"
+
+# Ping IP address to see if switch is up/ exists
+puts "*** Pinging IP Address\n";
+spawn ping -c 1 "$ip"
+set timeout 30;
+expect {
+	" 0%" {
+		puts "\nSuccess";
+	}
+	" 100%" {
+		puts "Failure. Aborting";
+		set rc -1
+		set error "FAILURE - Unable to ping"
+	}
+}
+
+
+# ********************************************************* #
+# SCP Script
+# ********************************************************* #
+
+if { ($rc == 0) && ($script != -1) } {
+	puts "\n$stars"
+	puts "*** SCP script\n"
+	
+	# SSH to IP address
+	set pass fibranne
+	spawn scp $script_path root@$ip:/tmp
+	expect {
+		# Unexpected: First time accessing switch
+		"yes/no" {
+			send "yes\r"
+			# Fall through to next case
+			exp_continue
+		}
+
+		# Expected: Provide password to copy file to switch
+		"assword" {
+			send "$pass\r"
+		}	
+	}
+
+	# Check scp error 
+	expect {
+		# Expected: Uploaded successfully
+		"100%" {
+			# Do nothing
+		}
+
+		# Unexpected: Can't find daemon
+		"No such file or directory" {
+			set rc -1
+			set error "FAILURE - Daemon doesn't exist (check input parameters, check view)"
+		}
+
+		# Unexpected: Password not default
+		"Permission denied" {
+			set rc -1
+			set error "FAILURE - Non-default password"
+		}
+	}
+	interact
+}
+
+
+# ********************************************************* #
+# SSH to IP Address
+# ********************************************************* #
+
+if { $rc == 0 } {
+	puts "\n$stars"
+	puts "*** SSH to IP Address\n"
+	
+	# SSH to IP address
+	set pass fibranne
+	spawn ssh root@$ip
+	expect {
+		# Unexpected: First time accessing switch
+		"yes/no" {
+			send "yes\r"
+			# Fall through to next case
+			exp_continue
+		}
+
+		# Expected: Provide password to copy file to switch
+		"assword" {
+			send "$pass\r"
+		}
+	}
+	expect {
+		"Use Control-C" {
+			# Send <C-c>
+			send \003
+			sleep 2
+		}
+		">" {
+			# Do nothing
+		}
+	}
+}
+
+
+# ********************************************************* #
+# Create Logical Switch
+# ********************************************************* #
+
+if { $rc == 0 && ($ls_create != -1)} {
+	puts "\n\n$stars"
+	puts "*** Create Logical Switch\n"
+
+	# Create logical switch
+	send "lscfg --create $ls_create -f\r"
+	expect {
+		# Expected: Logical switch successfully created
+		"successfully created" {
+			set ls_exist 1
+		}
+		
+		# Unexpected: Logical switch already created
+		"currently in use" {
+			set ls_exist 1
+		}
+		
+		# Unexpected: Switch not ready
+		"not ready for Logical Switch management" {
+			set rc -1
+			set error "FAILURE - Switch not ready"
+		}
+
+		# Unexpected: Break into more specific errors?
+		"failure" {
+			set rc -1
+			set error "FAILURE - Logical switch create failed"
+		}
+	}
+}
+
+
+# ********************************************************* #
+# Add Port To Logical Switch
+# ********************************************************* #
+
+if { $rc == 0 && ($ls_exist == 1) && ($port != -1)} {
+	puts "\n\n$stars"
+	puts "*** Add Port To Logical Switch\n"
+
+	# Add port 
+	expect ">"
+	send "lscfg --config $ls_create -port $port -f\r"
+	expect {
+		# Expected: Added port
+		"Configuration change successful" {
+			# Do nothing
+		}
+		
+		# Unexpected: Port already in logical switch
+		"already in the current switch" {
+			# Do nothing
+		}
+
+		# Unexpected: Break into more specific errors?
+		"failure" {
+			set rc -1
+			set error "FAILURE - Failed to add port to logical switch"
+		}
+	}
+
+	if { $rc == 0 } {
+		# Set context to new logical switch
+		expect ">"
+		send "setcontext $ls_create\r"
+		expect {
+			"Use Control-C" {
+				# Send <C-c>
+				send \003
+				sleep 2
+			}
+			">" {
+				# Do nothing
+			}
+		}
+
+		# Enable port
+		send "portenable $port\r"
+		sleep 2
+
+		# Set context back to base switch
+		expect ">"
+		send "setcontext 128\r"
+		expect {
+			"Use Control-C" {
+				# Send <C-c>
+				send \003
+				sleep 2
+			}
+			">" {
+				send "\r"
+			}
+		}
+	}
+}
+
+
+# ********************************************************* #
+# Run Script In Logical Switch Context
+# ********************************************************* #
+
+if { $rc == 0 && ($ls_exist == 1) && ($script != -1)} {
+	puts "\n\n$stars"
+	puts "*** Run Script In Logical Switch Context\n"
+
+	send "setcontext $ls_create\r"
+	expect {
+		"Use Control-C" {
+			# Send <C-c>
+			send \003
+			sleep 2
+		}
+		">" {
+			# Do nothing
+		}
+	}
+
+	# Run script
+	set timeout 240
+	send "/tmp/$script\r"
+
+	# Set context back to base switch
+	expect ">"
+	send "setcontext 128\r"
+	expect {
+		"Use Control-C" {
+			# Send <C-c>
+			send \003
+			sleep 2
+		}
+		">" {
+			send "\r"
+		}
+	}
+}
+
+
+# ********************************************************* #
+# Delete Logical Switch
+# ********************************************************* #
+
+if { $rc == 0 && ($ls_delete != -1)} {
+	puts "\n\n$stars"
+	puts "*** Delete Logical Switch\n"
+
+	# Move port from logical switch
+	if { $port != -1 } {
+		send "lscfg --config 128 -port $port -f\r"
+		expect {
+			# Expected: Removed port
+			"Configuration change successful" {
+				# Do nothing
+			}
+
+			# Unexpected: Port already in logical switch
+			"already in the current switch" {
+				# Do nothing
+			}
+
+			# Unexpected: Break into more specific errors?
+			"failure" {
+				set rc -1
+				set error "FAILURE - Failed to remove port from logical switch"
+			}
+		}
+		expect ">"
+	}
+
+	# Delete logical switch
+	send "lscfg --delete $ls_create -f\r"
+	expect {
+		# Expected: Logical switch successfully deleted
+		"successfully deleted" {
+			# Do nothing
+		}
+		
+		# Unexpected: Logical switch already deleted
+		"not currently in use" {
+			# Do nothing
+		}
+		
+		# Unexpected: Break into more specific errors?
+		"failure" {
+			set rc -1
+			set error "FAILURE - Logical switch delete failed"
+		}
+	}
+}
+
+
+
+# ********************************************************* #
+# Exit Switch
+# ********************************************************* #
+
+expect ">"
+send "exit\r"
+interact
+
+
+# ********************************************************* #
+# Display Status
+# ********************************************************* #
+
+set time_stamp [clock format [clock seconds] -format {%H:%M:%S %d/%m/%y}]
+if { $rc == -1 } {
+	puts "\n$stars\n\[$time_stamp\] $error\n$stars\n"
+	exit -1
+} else {
+	puts "\n$stars\n\[$time_stamp\] SUCCESS - Logical Switch Create Delete\n$stars\n"
+}

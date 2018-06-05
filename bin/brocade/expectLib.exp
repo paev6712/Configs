@@ -1,0 +1,149 @@
+#!/usr/bin/expect
+# File: expectLib.exp
+# Purpose: Common file containing procedures (functions) that can be used in
+#		multiple scripts
+
+
+# ********************************************************* #
+# Procedures
+# ********************************************************* #
+
+#
+# Procedure: printSection
+#
+# Description: Print section to console
+#
+# Inputs:
+#		section:					Section string
+#
+# Outputs:
+#
+# Returns:
+#
+proc printSection {section} {
+
+	set stars "***********************************************************"
+
+# Execute
+
+	puts "\n$stars"
+	puts "*** $section\n"
+}
+
+
+#
+# Procedure: pingIPAddress
+#
+# Description: Ping given IP to see if switch is up / exists
+#
+# Inputs:
+#		ip:							IP address to be pinged
+#
+# Outputs:
+#		rc:							Return code
+#		message:					Error message
+#
+# Returns:
+#		Success:					0
+#		Failure:					-1
+#
+proc pingIPAddress { ip } {
+
+	set rc 0
+	set message ""
+
+# Execute
+
+	printSection "Ping IP Address"
+	
+	# Ping IP address to see if switch is up/ exists
+	spawn ping -c 1 "$ip"
+	set timeout 30;
+	expect {
+		# Expected: No dropped packets
+		" 0%" {
+			puts "\nSuccess";
+		}
+	
+		# Unexpected: All packets were dropped
+		" 100%" {
+			puts "*** Failure. Aborting";
+			set rc -1
+			set message "FAILURE - Unable to ping"
+		}
+	}
+	interact
+
+	# Return status
+	return [list $rc $message]
+}
+
+
+#
+# Procedure: removeKnownHost
+#
+# Description: Removes the given IP from the known_hosts file
+#
+# Inputs:
+#		ip:							IP address to be removed
+#
+# Outputs:
+#		rc:							Return code
+#
+# Returns:
+#		Success:					0
+#		Failure:					-1
+#
+proc removeKnownHost { ip } {
+
+	set rc 0
+
+# Execute
+
+	printSection "Remove key from known hosts"
+	spawn ssh-keygen -R $ip
+	expect {
+		# Expected: Removed RSA key from known_hosts
+		"known_hosts updated" {
+			# Try to copy daemon again
+			puts "Removed key!!\n"
+			set rc 0
+		}
+
+		# Unexpected: RSA key already removed
+		"Already removed" {
+			# Don't retry
+			set rc -1
+		}
+	}
+	interact
+
+	# Return status
+	return $rc
+}
+
+
+#
+# Procedure: displayResult
+#
+# Description: Displays the message of the script
+#
+# Inputs:
+#		rc:							Return code
+#		message:					Message to display
+#
+# Outputs:
+#
+# Returns:
+#
+proc displayResult { rc message } {
+	set time_stamp [clock format [clock seconds] -format {%H:%M:%S %m/%d/%y}]
+	set stars "***********************************************************"
+
+# Execute
+
+	puts "\n$stars\n\[$time_stamp\] $message\n$stars\n"
+	if { $rc < 0 } {
+		exit -1
+	}
+}

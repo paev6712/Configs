@@ -1,0 +1,236 @@
+#!/usr/bin/expect
+# File: runScript.exp
+# Purpose: Run given script on the specified switch.
+
+
+# ********************************************************* #
+# Globals
+# ********************************************************* #
+set rc 0
+set error "FAILURE"
+set stars "***********************************************************"
+
+set ip -1
+set script -1
+
+
+# ********************************************************* #
+# Process arguments 
+# ********************************************************* #
+
+# Expected args:
+#	 * -i, ---ip: Ip address
+#	 * -s, --script: Script of additional commands 
+
+# Process passed args
+if { $argc > 0 } {
+	# Step through each arg (for loop)
+	for {set i 0} {$i < $argc} {incr i 1} {
+		set arg [lindex $argv $i];
+
+		# Switch based on flag
+		switch -regex -- "$arg" {
+
+			(^-i)|(^--ip) {
+				# Check if ip address is in correct format
+				set result [ regexp {^(([0-9]{1,3}[\.]){3}[0-9]{1,3})$} [lindex $argv [expr $i + 1]] -> ip ]
+				if { $result != 1 } {
+					puts "\nInvalid ip address: [lindex $argv [expr $i + 1]]";
+					puts "Please input a valid ip address format";
+					exit -1;
+				}
+
+				# Increment counter to next flag
+				set i [expr $i + 1];
+			}
+
+			(^-s)|(^--script) {
+				# Check if a valid bash script is specified
+				set result [ regexp {^\/{0,1}(.+\/)*(.*\.*.+)$} [lindex $argv [expr $i + 1]] -> -> script];
+				set script_path [lindex $argv [expr $i + 1]]
+				if { $result != 1 } {
+					puts "\nInvalid script path: [lindex $argv [expr $i + 1]]";
+					puts "Please specify a valid path";
+					exit -1;
+				}
+
+				# Increment counter to next flag
+				set i [expr $i + 1];
+			}
+
+			(^-h)|(^--help) {
+				puts "\nExpected args:";
+				puts "   * -i, --ip: Ip address";
+				puts "   * -s, --script: Script of additional commands";
+				exit 0;
+			}
+
+			default {
+				puts "\nUnknown parameter specified: $arg";
+				exit -1;
+			}
+		}
+	}
+} else {
+	puts "\nNo arguments specified. Use -h flag for help\n";
+	exit -1;
+}
+
+# Check all necessary parameters specified
+if { ($ip == -1) || ($script == -1) } {
+	puts "\nMust specify both ip address and script."
+	puts "Use -h flag for help\n";
+	exit -1;
+}
+
+# Print parameters
+puts "\n$stars\n\t\tRun Script\n$stars\n"
+puts "switch ip : $ip";
+puts "script  : $script";
+puts "script_path  : $script_path";
+
+
+# ********************************************************* #
+# Ping IP address to see if switch is up/ exists 
+# ********************************************************* #
+
+puts "\n$stars"
+
+# Ping IP address to see if switch is up/ exists
+puts "*** Pinging IP Address\n";
+spawn ping -c 1 "$ip"
+set timeout 30;
+expect {
+	" 0%" {
+		puts "\nSuccess";
+	}
+	" 100%" {
+		puts "Failure. Aborting";
+		set rc -1
+		set error "FAILURE - Unable to ping"
+	}
+}
+
+
+# ********************************************************* #
+# SCP Script
+# ********************************************************* #
+
+if { ($rc == 0) && ($script != -1) } {
+	puts "\n$stars"
+	puts "*** SCP script\n"
+	
+	# SSH to IP address
+	set pass fibranne
+	spawn scp $script_path root@$ip:/tmp
+	expect {
+		# Unexpected: First time accessing switch
+		"yes/no" {
+			send "yes\r"
+			# Fall through to next case
+			exp_continue
+		}
+
+		# Expected: Provide password to copy file to switch
+		"assword" {
+			send "$pass\r"
+		}	
+	}
+
+	# Check scp error 
+	expect {
+		# Expected: Uploaded successfully
+		"100%" {
+			# Do nothing
+		}
+
+		# Unexpected: Can't find daemon
+		"No such file or directory" {
+			set rc -1
+			set error "FAILURE - Daemon doesn't exist (check input parameters, check view)"
+		}
+
+		# Unexpected: Password not default
+		"Permission denied" {
+			set rc -1
+			set error "FAILURE - Non-default password"
+		}
+	}
+	interact
+}
+
+
+# ********************************************************* #
+# SSH to IP Address
+# ********************************************************* #
+
+if { $rc == 0 } {
+	puts "\n$stars"
+	puts "*** SSH to IP Address\n"
+	
+	# SSH to IP address
+	set pass fibranne
+	spawn ssh root@$ip
+	expect {
+		# Unexpected: First time accessing switch (should have hit with scp)
+		"yes/no" {
+			send "yes\r"
+			# Fall through to next case
+			exp_continue
+		}
+
+		# Expected: Provide password to copy file to switch
+		"assword" {
+			send "$pass\r"
+		}
+	}
+	expect {
+		"Use Control-C" {
+			# Send <C-c>
+			send \003
+			sleep 2
+		}
+		">" {
+			# Do nothing
+		}
+	}
+}
+
+
+# ********************************************************* #
+# Run Script
+# ********************************************************* #
+
+if { $rc == 0 } {
+	puts "\n\n$stars"
+	puts "*** Run Script\n"
+
+	# Make sure permissions are correct
+	send "chmod 755 /tmp/$script\r"
+
+	# Run script
+	set timeout 600
+	send "/tmp/$script\r"
+}
+
+
+# ********************************************************* #
+# Exit Switch
+# ********************************************************* #
+
+expect ">"
+send "exit\r"
+interact
+
+
+# ********************************************************* #
+# Display Status
+# ********************************************************* #
+
+set time_stamp [clock format [clock seconds] -format {%H:%M:%S %d/%m/%y}]
+if { $rc == -1 } {
+	puts "\n$stars\n\[$time_stamp\] $error\n$stars\n"
+	exit -1
+} else {
+	puts "\n$stars\n\[$time_stamp\] SUCCESS - Run Script\n$stars\n"
+}
