@@ -99,13 +99,13 @@ hi def link yangLengthArg Special
 "**************************************************
 
 " Show existing tab as 2 spaces width
-set tabstop=2
+setlocal tabstop=2
 
 " Tab width is 2 spaces
-set shiftwidth=2
+setlocal shiftwidth=2
 
 " When inserting, replace tabs with spaces
-set expandtab
+setlocal expandtab
 
 
 "**************************************************

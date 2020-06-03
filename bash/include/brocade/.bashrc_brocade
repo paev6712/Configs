@@ -16,11 +16,11 @@ export BASE_PROJ_DIR="$BASE_GIT_DIR/vobs/projects/springboard"
 # Define Brocade-specific source directory
 export SOURCE_DIR="$BASE_PROJ_DIR/fabos/src"
 
-# Define path to zzz drive
-export ZZZ_DIR=$(/tools/bsnbld/scripts/gittools/get_my_workspace)
+# Define path to work directory
+export WORK_DIR="/work/pe413109"
 
-# Append PATH variable with emake wrapper script
-export PATH=$PATH:/tools/bsneng/bin
+# Append PATH variable with build tools
+export PATH=$PATH:/tools/bsneng/bin:/tools/bsnbld/accupara/build
 
 # Append PATH variable with FOS tools
 export PATH=$PATH:/projects/bsnswtools/bin/fos
@@ -54,22 +54,22 @@ brocade_commands() {
 #
 # Input Parameters:
 # 		Git repo:							Git repo to cd into
-#
+
 git_repo() {
 	if [ -z "$1" ]; then
-		cd "$ZZZ_DIR/git"
+		cd "$WORK_DIR/git"
 	else
-		if [ -d "$ZZZ_DIR/git/$1" ]; then
-			cd "$ZZZ_DIR/git/$1"
+		if [ -d "$WORK_DIR/git/$1" ]; then
+			cd "$WORK_DIR/git/$1"
 
 			# Re-source .bashrc after in git repo
 			source ~/.bashrc
 		else
 			echo "Git repo $1 doesn't exist. Please choose from:"
 			echo
-			ls -1 "$ZZZ_DIR/git"
+			ls -1 "$WORK_DIR/git"
 			echo
-			cd "$ZZZ_DIR/git"
+			cd "$WORK_DIR/git"
 		fi
 	fi
 }

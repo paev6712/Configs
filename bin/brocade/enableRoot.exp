@@ -200,56 +200,24 @@ if { $enable_root == 1 } {
 			}
 			
 			send "userconfig --change root -e yes\r"
-			expect {
-				# Success - FOS switch
-				"root will be logged out" {
-					expect ">"
-					send "rootaccess --set all\r"
-					expect {
-						# Success - enabled
-						"confirm to proceed" {
-							send "y\r"
-						}
-		
-						# Success - already enabled
-						"No change" {
-						}
-		
-						# Unexpected response
-						">" {
-							set rc -1
-							set message "FAILURE - FOS unexpected response"
-						}
+				# No comment
+				expect ">"
+				send "rootaccess --set all\r"
+				expect {
+					# Success - enabled
+					"confirm to proceed" {
+						send "y\r"
 					}
-				}
-
-				# Unexpected - root already enabled
-				"No change to account attributes" {
-					expect ">"
-					send "rootaccess --set all\r"
-					expect {
-						# Success - enabled
-						"confirm to proceed" {
-							send "y\r"
-						}
 		
-						# Success - already enabled
-						"No change" {
-						}
+					# Success - already enabled
+					"No change" {
+					}
 		
-						# Unexpected response
-						">" {
-							set rc -1
-							set message "FAILURE - FOS unexpected response"
-						}
-					}		
-				}
-
-				# Failure - NOS switch
-				"unknown argument" {
-					send "conf\r"
-					expect ">"
-					send "rbridge-id <rb id>"
+					# Unexpected response
+					">" {
+						set rc -1
+						set message "FAILURE - FOS unexpected response"
+					}
 				}
 			}
 			send "exit\r"
@@ -296,10 +264,35 @@ if { $rc == 0 } {
 		}
 	}
 	expect {
-		# Send <C-c>
+		# # Send <C-c>
+		# "Use Control-C" {
+		# 	send \003
+		# 	sleep 2
+		# }
+
+		# Change admin/user password
 		"Use Control-C" {
-			send \003
-			sleep 2
+			# Send enter to start process
+			send "\r"
+			# Change admin password
+			expect "Changing password for admin" {
+				expect "new password:" {
+					send "password\r"
+				}
+				expect "Re-type new password:" {
+					send "password\r"
+				}
+			}
+
+			# Change user password
+			expect "Changing password for user" {
+				expect "new password:" {
+					send "password\r"
+				}
+				expect "Re-type new password:" {
+					send "password\r"
+				}
+			}
 		}
 
 		# Change root password

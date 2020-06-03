@@ -145,7 +145,7 @@ if { [lindex $result 0] < 0} {
 if { $rc == 0 } {
 	printSection "Copy Lib to IP Address"
 
-	set pass fibranne
+	set pass password
 
 	while 1 {
 		# scp daemon to switch

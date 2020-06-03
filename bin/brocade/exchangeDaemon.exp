@@ -17,11 +17,13 @@ set rc 0
 set message "SUCCESS - DAEMON EXCHANGED"
 set stars "***********************************************************"
 
+# Default values
 set base_proj_dir $env(BASE_PROJ_DIR)
 set broot $base_proj_dir/build
 set preserve 1
 set reboot 1
 set exact 0
+set password password
 
 
 # ********************************************************* #
@@ -35,6 +37,7 @@ set exact 0
 #	 * --no_preserve: Preserve flag
 #	 * --no_reboot: Reboot flag
 #	 * --exact: Service is the same as the daemon
+#	 * --password: Non-default password
 
 # Process passed args
 if { $argc > 0 } {
@@ -99,6 +102,11 @@ if { $argc > 0 } {
 				set exact 1
 			}
 
+			(^--password) {
+				# Use provided password instead of default
+				set password [lindex $argv [expr $i + 1]]
+			}
+
 			(^-h)|(^--help) {
 				puts "\nExpected args:";
 				puts "   * -s, --service: service (daemon)";
@@ -107,6 +115,7 @@ if { $argc > 0 } {
 				puts "   * --no_preserve: preserve flag (default true)";
 				puts "   * --no_reboot: reboot flag (default true)";
 				puts "   * --exact: service is same as daemon (default false)";
+				puts "   * --password: non-default password";
 				puts ""
 				exit 0;
 			}
@@ -156,8 +165,6 @@ if { [lindex $result 0] < 0} {
 if { $rc == 0 } {
 	printSection "Copy Daemon to IP Address"
 
-	set pass fibranne
-
 	while 1 {
 		# scp daemon to switch
 		spawn scp $daemon_path/$daemon root@$ip:/tmp
@@ -177,7 +184,7 @@ if { $rc == 0 } {
 
 			# Expected: Provide password to copy file to switch
 			"assword" {
-				send "$pass\r"
+				send "$password\r"
 			}	
 		}
 
@@ -229,7 +236,7 @@ if { $rc == 0 } {
 	expect {
 		# Password
 		"assword" {
-			send "$pass\r"
+			send "$password\r"
 		}
 		# Max sessions
 		"Max remote sessions" {
