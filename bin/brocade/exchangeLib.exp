@@ -21,6 +21,7 @@ set base_proj_dir $env(BASE_PROJ_DIR)
 set broot $base_proj_dir/build
 set preserve 1
 set reboot 1
+set password password
 
 
 # ********************************************************* #
@@ -33,6 +34,7 @@ set reboot 1
 #	 * -i, ---ip: ip address
 #	 * --no_preserve: preserve flag
 #	 * --no_reboot
+#	 * --password: Non-default password
 
 # Process passed args
 if { $argc > 0 } {
@@ -92,6 +94,14 @@ if { $argc > 0 } {
 				set reboot 0
 			}
 
+			(^--password) {
+				# Use provided password instead of default
+				set password [lindex $argv [expr $i + 1]]
+
+				# Increment counter to next flag
+				set i [expr $i + 1];
+			}
+
 			(^-h)|(^--help) {
 				puts "\nExpected args:";
 				puts "   * -s, --service: service (daemon)";
@@ -99,6 +109,7 @@ if { $argc > 0 } {
 				puts "   * -i, ---ip: ip address";
 				puts "   * --no_preserve: preserve flag (default true)";
 				puts "   * --no_reboot";
+				puts "   * --password: non-default password";
 				puts ""
 				exit 0;
 			}
@@ -145,8 +156,6 @@ if { [lindex $result 0] < 0} {
 if { $rc == 0 } {
 	printSection "Copy Lib to IP Address"
 
-	set pass password
-
 	while 1 {
 		# scp daemon to switch
 		spawn scp $lib_path/$lib root@$ip:/tmp
@@ -166,7 +175,7 @@ if { $rc == 0 } {
 
 			# Expected: Provide password to copy file to switch
 			"assword" {
-				send "$pass\r"
+				send "$password\r"
 			}	
 		}
 
@@ -218,7 +227,7 @@ if { $rc == 0 } {
 	expect {
 		# Password
 		"assword" {
-			send "$pass\r"
+			send "$password\r"
 		}
 		# Max sessions
 		"Max remote sessions" {

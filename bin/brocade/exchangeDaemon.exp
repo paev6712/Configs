@@ -1,5 +1,5 @@
 #!/usr/bin/expect
-# File: exchangeLib.exp
+# File: exchangeDaemon.exp
 # Description: Automate process of sending a daemon to a switch and then
 #          exchanging it and rebooting.
 
@@ -105,6 +105,9 @@ if { $argc > 0 } {
 			(^--password) {
 				# Use provided password instead of default
 				set password [lindex $argv [expr $i + 1]]
+
+				# Increment counter to next flag
+				set i [expr $i + 1];
 			}
 
 			(^-h)|(^--help) {

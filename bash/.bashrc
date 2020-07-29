@@ -80,6 +80,9 @@ else
 	export CSCOPE_DB="$BASE_GIT_DIR/cscope/cscope_database.out"
 fi
 
+# Append PATH variable with scripts
+export PATH=$PATH:$(pwd -P)/bin/configs_scripts
+
 
 #**************************************************
 # ***** Commands *****

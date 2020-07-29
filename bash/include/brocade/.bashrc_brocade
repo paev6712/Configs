@@ -19,6 +19,9 @@ export SOURCE_DIR="$BASE_PROJ_DIR/fabos/src"
 # Define path to work directory
 export WORK_DIR="/work/pe413109"
 
+# Append PATH variable with brocade-specific scripts
+export PATH=$PATH:$(pwd -P)/bin/configs_scripts/brocade
+
 # Append PATH variable with build tools
 export PATH=$PATH:/tools/bsneng/bin:/tools/bsnbld/accupara/build
 

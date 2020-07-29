@@ -1,5 +1,6 @@
 ~/configs/ contains generic configuration files for:
 	bashrc
+	bin
 	vim
 	tmux
 

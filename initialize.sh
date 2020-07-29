@@ -6,6 +6,31 @@
 echo "Begin intializing environment:"
 
 
+# Link scripts to bin
+echo "    Link scripts to bin"
+if [ -e ~/bin/configs_scrips ]; then
+	echo "        scripts already linked. Overwrite?"
+	select yn in "Yes" "No"; do
+		case $yn in
+			Yes )
+				# Remove existing symlink
+				rm ~/bin/configs_scripts
+				# Symlink scripts into bin
+				ln -s ~/configs/bin/ ~/bin/configs_scripts
+				break;;
+			No )
+				# Leave existing symlink
+				break;;
+		esac
+	done
+else 
+	# Symlink scripts into bin
+	ln -s ~/configs/bin/ ~/bin/configs_scripts
+fi
+echo "    	Complete"
+echo ""
+
+
 # Bash configuration
 echo "    Initialize bash configuration"
 if [ -f ~/.bashrc ]; then
@@ -31,6 +56,8 @@ else
 	# Reload bash config
 	source ~/.bashrc
 fi
+echo "    	Complete"
+echo ""
 
 
 # Tmux configuraiton
@@ -58,6 +85,8 @@ else
 	# Reload bash config
 	tmux source-file ~/.tmux.conf
 fi
+echo "    	Complete"
+echo ""
 
 
 # Vim configuration
@@ -81,6 +110,9 @@ else
 	# Symlink .vimrc into scope
 	ln -s ~/configs/vim/.vimrc ~/
 fi
+echo "    	Complete"
+echo ""
+
 
 echo "        Install vim plugins"
 if [ -d ~/.vim/ ]; then
@@ -106,6 +138,8 @@ else
 	# Create tmp directory for .swp files
 	mkdir ~/.vim/tmp/ 
 fi
+echo "    	Complete"
+echo ""
 
 
 echo "Finished initializing environment"
